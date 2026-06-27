@@ -1,0 +1,32 @@
+# Sesje i klucze (NIGDY nie commituj — dane konta/passkey)
+~/.play24/
+session.json
+passkey_*.json
+
+# Artefakty reverse-engineeringu (prawa autorskie / dane osobowe)
+out/
+dex/
+xapk/
+*.apk
+*.xapk
+*.dex
+flows.mitm
+capture*.txt
+*.png
+mitm*.log
+frida.log
+.mitm/
+
+# Narzędzia/binaria
+platform-tools/
+jadx-tool/
+venv/
+redroid-data/
+frida-server
+fs
+fs*.xz
+*.zip
+
+# Python
+__pycache__/
+*.pyc

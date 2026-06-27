@@ -1,0 +1,67 @@
+# CLAUDE.md — kontekst projektu (Play24 CLI, reverse-engineering)
+
+Plik dla asystenta, by szybko wrócić do tematu mając tylko to repo. Wszystko poniżej pochodzi
+z reverse-engineeringu apki **Play24** (`com.play.play24m`, v11.9.0, build Miquido `com.miquido.play360`).
+Repo jest **publiczne i zanonimizowane** — nie commituj danych konta (numery/tokeny/passkey/APK).
+
+## Co to jest
+Nieoficjalny klient CLI (Python, stdlib + `requests` + `cryptography`) do self-care API Play24:
+odczyt salda/pakietów/faktur/konta, wiele numerów, oraz włączanie/wyłączanie pakietów.
+
+## Architektura API
+- **API główne (self-care):** `https://play24-cloud.play.pl/cloud/play24/gateway/{ms}/v{N}/{ścieżka}`
+- **SSO/logowanie:** `https://login-cloud.play.pl/cloud/sso-customers/gateway/sso-mobile/`
+- **OAuth:** `https://oauth.play.pl/oauth/` (client_id=`play24_app`, redirect `https://firebase.play.pl/oauth-callback/`)
+- **Mikroserwisy** (nazwa + wersja): ms-balances v3, ms-offers v12, ms-finances v4, ms-clients v3,
+  ms-components v8 (ODCZYT katalogu), **ms-services v1** (ZAPIS/modyfikacja komponentów), ms-payments v6,
+  ms-activities v2, ms-sim v2, ms-notifications v4, ms-appinfo v1 … (pełny katalog: `endpoints.txt`, `API.md`).
+- **Gateway `{userId}` = msisdn z prefiksem 48** (np. `48XXXXXXXXX`), `accessLevel: MSISDN`.
+
+## Auth (najważniejsze)
+- **Sesja jest COOKIE-based, NIE Bearer.** Globalny CookieManager w apce; cookies domenowe `.play.pl`
+  (`access-token`/`refresh-token` JWE + `SSOWWW_*`) ustawiane przez `fido/authenticate/finish` działają
+  też na bramce. Klient MUSI trzymać cookie jar.
+- **Logowanie = FIDO2/WebAuthn passkey** (alg ES256/-7, attestation `none`, rpId `https://sso.play.pl`,
+  origin = rpId). Klient jest własnym autentykatorem (klucz EC P-256 w pliku zamiast Android Keystore).
+- **Onboarding numeru:** `POST sso-mobile/api/standard/find-handlers/{msisdn}` → `POST api/kyc/register?hint=MSISDN_OTP_REQUIRED`
+  `{type:STANDARD,input:msisdn}` (SMS, kod 4-cyfr) → `PUT api/kyc/register/{nonce} {password:<KOD_SMS>}`
+  (**kod OTP idzie w polu `password`**) → requiredAction `FINISH_FIDO` →
+  `POST api/fido/register {nonce,identifier:<msisdn>,attestation:"none",authenticatorSelection:{platform,requireResidentKey:true,userVerification:required}}`
+  (**authenticatorSelection WYMAGANE** — bez niego 500) → makeCredential → `POST api/fido/register/finish` → ProfileDto.
+- **Logowanie passkeyem:** `POST api/fido/authenticate {profileId,authenticatorSelection}` → AuthenticateOptions
+  (challenge, allowCredentials) → podpis → `POST api/fido/authenticate/finish` → cookies sesji.
+- Refresh tokenu na 401: `DELETE api/fido/token/refresh/{profileId}/{userId}` + retry z `X-Retry-Disallowed: true`.
+
+## Aktywacja pakietu (write transakcyjny + SCA) — patrz ACTIVATION.md
+- **Endpoint: `POST ms-services/v1/components/{userId}`** (NIE ms-components/v8). Brak nagłówka OperationToken.
+- Nagłówki wymagane przez bramkę: **`OS-Type: android`, `OS-Version: 33`**, App-Version, cookies.
+- Body: `{type:ACTIVATE|DEACTIVATE, componentId, componentType, params:[], email, otp:null, operationId:null}`.
+- Flow SCA: POST → **409 `MP0174`** `{operationId, hash(sha512), acrType:FIDO}` → step-up
+  `POST/PUT api/standard/{profileId}/authorize/direct` (FIDO, nagłówki Device-Id/Manufacturer/Model;
+  characteristic start: challenge/public-key=credId/rpId/timeout; finish: id/clientDataJSON/authenticatorData/signature)
+  → `action:TOKEN` → ponów POST components z `operationId` z 409 → sukces.
+- Aktywne pakiety mają w `ms-components` pola `activationDate`/`nextApplyDate`/`expirationDate`/`cyclicType`.
+
+## Wiele numerów
+- **Osobne konta** (różni właściciele): każdy numer = własny passkey/profil; przełączanie = `auth --msisdn`
+  (czyści cookie jar, bierze profile_id z metadanych numeru — inaczej cross-account 401).
+- **Jedno konto, wiele numerów:** `GET api/standard/{profileId}/msisdn/list` + `POST api/standard/{profileId}/token/msisdn-switch/{msisdn}`.
+
+## Mapa plików
+- `play24.py` — klient CLI (komendy: register-start/otp, auth, accounts, numbers, switch, balance,
+  balances-all, offers, finances, invoices, account, components, packages, activate/deactivate, history, sim, raw, whoami).
+- `play24_passkey.py` — autentykator WebAuthn (EC P-256, mini-CBOR, base64 standard NO_WRAP z paddingiem).
+- `API.md` / `ACTIVATION.md` / `endpoints.txt` — dokumentacja.
+- `METHODS.md` — techniki RE. `re/unpin.js` + `re/frida_run.py` — narzędzia dynamiki.
+- Sesja runtime (NIE w repo): `~/.play24/session.json` + `~/.play24/passkey_<48msisdn>.json`.
+
+## Jak wrócić do głębszej analizy (repo nie zawiera APK)
+1. Pobierz APK Play24 (XAPK z mirrora), rozpakuj splity, `jadx -d out base.apk`.
+2. Dekoder adnotacji Retrofit i mapowanie klas — patrz METHODS.md.
+3. Dynamika: ReDroid (Android w kontenerze) + `re/unpin.js` (Frida) + mitmproxy; sterowanie `adb`.
+
+## Gotchas
+- OkHttp/Retrofit są zobfuskowane R8 — adnotacje i klasy mają krótkie nazwy (np. CertificatePinner=`okhttp3.b`).
+- ms-components (odczyt) ≠ ms-services (zapis) — pomyłka = 401.
+- Cert pinning (8× SHA256 dla `*.play.pl`) dotyczy tylko apki; własny klient łączy się normalnie.
+- Auth po IP (`oauth/authorize-ip`) działa tylko z sieci mobilnej operatora (GGSN) — nie z WiFi.
