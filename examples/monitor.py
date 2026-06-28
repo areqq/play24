@@ -18,7 +18,8 @@ package_renew_days, package_expire_days, package_validity_days.
 Status: 🟢 OK · 🟠 uwaga (<2× próg) · 🔴 reaguj (próg przekroczony) · ⚪ brak danych.
 Powiadomienie leci gdy w sekcji jest 🔴. exit≠0 gdy jakiekolwiek 🔴 (cron wyśle maila).
 
-Cron:  0 9 * * *  cd /sciezka/repo && /usr/bin/python3 examples/monitor.py
+Cron (raz na dobę):  0 9 * * *  cd /sciezka/repo && uv run python examples/monitor.py
+Lekki — postawisz go na darmowym mikro-VPS, np. https://frog.mikr.us (cron + uv).
 Wymaga onboardingu numeru przez CLI (play24.py register-start/otp).
 """
 import json

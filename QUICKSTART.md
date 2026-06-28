@@ -99,11 +99,15 @@ oraz zasób `play24://accounts`. Operacje płatne (`activate`) wymagają potwier
 ## 6. Monitoring w cron (progi → Telegram)
 
 Przykład w `examples/monitor.py` (saldo / ważność konta / GB / minuty / pakiety, alerty 🟢🟠🔴).
-Konfiguracja w `~/.play24/monitor.json` (poza repo). Patrz nagłówek pliku `examples/monitor.py`.
+Konfiguracja w `~/.play24/monitor.json` (poza repo). Szczegóły: [docs/monitor.md](docs/monitor.md).
 
 ```bash
-*/30 * * * *  cd /ABS/ŚCIEŻKA/play24 && uv run python examples/monitor.py >> ~/.play24/monitor.log 2>&1
+# raz na dobę o 9:00:
+0 9 * * *  cd /ABS/ŚCIEŻKA/play24 && uv run python examples/monitor.py >> ~/.play24/monitor.log 2>&1
 ```
+
+> 💡 Monitor jest lekki (raz dziennie, kilka żądań) — spokojnie postawisz go na darmowym serwerze,
+> np. [frog.mikr.us](https://frog.mikr.us) (darmowy mikro-VPS; wystarczy `cron` + `uv`).
 
 ---
 Pełne API: [`docs/API.md`](docs/API.md), [`docs/ACTIVATION.md`](docs/ACTIVATION.md),
