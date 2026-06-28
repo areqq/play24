@@ -149,8 +149,44 @@ odpowiedzi) najłatwiej potwierdzić jednym podsłuchem oficjalnej apki:
 Alternatywa bez roota/pinningu: zaloguj się na [24.play.pl](https://24.play.pl) w przeglądarce
 i podejrzyj token w DevTools → Network (web używa zbliżonego backendu OAuth).
 
+## Użycie jako biblioteka (`play24lib`)
+
+Do skryptów (np. monitoring w cron). Wymaga wcześniejszego onboardingu numeru przez CLI
+(`play24.py register-start` + `register-otp`) — to zapisuje profil + passkey w `~/.play24/`.
+
+```python
+from play24lib import Play24
+
+p = Play24("48500100200").login()      # logowanie passkeyem (FIDO2)
+s = p.summary()                        # zwięzłe dane do progów
+print(s["balance_pln"], s["balance_unit"])      # np. 13.51 PLN
+print(s["account_expires"], s["account_expires_days"])
+print(s["data_gb"], "GB |", s["minutes"], "min")
+for pkg in s["packages"]:              # aktywne pakiety + daty
+    print(pkg["title"], pkg["activationDate"], pkg["expirationDate"], pkg["nextApplyDate"])
+
+# dane surowe też dostępne:
+p.balance(); p.account(); p.counters(); p.packages()
+```
+
+`summary()` zwraca m.in.: `balance_pln`, `account_expires(_days)`, `data_gb`, `minutes`,
+`counters[]`, `packages[]`, `package_expire_days`, `package_renew_days`. Helpery:
+`parse_amount`, `to_gb`, `to_minutes`, `days_until`.
+
+### Gotowy monitor do crona — `examples/monitor.py`
+Pilnuje progów (saldo, ważność konta, GB, minuty, wiek pakietu od aktywacji, bliskość
+wygaśnięcia/odnowienia). Wypisuje ostrzeżenia i kończy kodem ≠0 gdy próg przekroczony
+(cron wyśle wtedy maila). Progi konfigurujesz w słowniku `WATCH` na górze pliku.
+```bash
+python3 examples/monitor.py
+# cron (codziennie 9:00):
+# 0 9 * * *  cd /sciezka/do/repo && /usr/bin/python3 examples/monitor.py
+```
+
 ## Pliki w repo
 - `play24.py` — klient CLI
+- `play24lib.py` — biblioteka (klasa `Play24`) do użycia w skryptach
+- `examples/monitor.py` — przykładowy monitor progów do crona
 - `play24_passkey.py` — software'owy autentykator WebAuthn/FIDO2
 - `API.md` — dokumentacja rozpracowanego API (hosty, mikroserwisy, auth)
 - `ACTIVATION.md` — recepta na aktywację pakietów (flow SCA/step-up)
