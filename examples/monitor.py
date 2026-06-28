@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """
-Monitor Play24 do crona — status konta z kolorowymi emoji + alerty na Telegram.
+Monitor Play24 do crona — elastyczne, nazwane notyfikatory + sekcje alertów per numer.
 
-Buduje pełny status (saldo, ważność konta, GB, minuty, PŁATNE pakiety) z oznaczeniami:
-  🟢 OK   🟠 uwaga (zbliża się próg)   🔴 reaguj (próg przekroczony)   ⚪ brak danych
-Powiadomienie na Telegram leci TYLKO gdy jest 🔴 (i wtedy zawiera cały kolorowy status);
-exit≠0 gdy 🔴 (cron wyśle też maila). Darmowe usługi/limity są pomijane. Pakiety cykliczne
-→ "odnowi się", jednorazowe → "wygasa".
+Konfiguracja: ~/.play24/monitor.json (POZA repo — sekrety/numery). Wzór:
+examples/monitor.config.example.json.
 
-Konfiguracja: ~/.play24/monitor.json (poza repo). Wzór: examples/monitor.config.example.json.
+Model:
+  "notifiers": { "<nazwa>": { "type": "telegram", "bot_token": "...", "chat_id": "...", "insecure": false } }
+      — globalnie zdefiniowane kanały (typ na razie 'telegram', rozszerzalny w przyszłości).
+  "watch": { "<48msisdn>": { "label": "...", "alerts": [
+        { "notify": ["<nazwa>", ...], <progi> }, ...
+      ] } }
+      — dowolnie wiele sekcji; każda ma własne progi i listę notyfikatorów, na które leci alert.
+
+Progi (pomiń klucz, by nie sprawdzać): min_pln, min_gb (krajowe), min_minutes, account_days,
+package_renew_days, package_expire_days, package_validity_days.
+Status: 🟢 OK · 🟠 uwaga (<2× próg) · 🔴 reaguj (próg przekroczony) · ⚪ brak danych.
+Powiadomienie leci gdy w sekcji jest 🔴. exit≠0 gdy jakiekolwiek 🔴 (cron wyśle maila).
+
 Cron:  0 9 * * *  cd /sciezka/repo && /usr/bin/python3 examples/monitor.py
 Wymaga onboardingu numeru przez CLI (play24.py register-start/otp).
 """
@@ -24,23 +33,17 @@ from play24lib import Play24, package_status  # noqa: E402
 CONFIG_PATH = os.path.expanduser("~/.play24/monitor.json")
 GREEN, ORANGE, RED, GRAY = "🟢", "🟠", "🔴", "⚪"
 
-WATCH_DEFAULT = {
-    "48500100200": dict(label="Mój numer", min_pln=5.0, min_gb=0.5, min_minutes=10, account_days=14,
-                        package_renew_days=3, package_expire_days=3, package_validity_days=31),
-}
-
 
 def load_config():
     try:
         with open(CONFIG_PATH) as f:
-            cfg = json.load(f)
+            return json.load(f)
     except (OSError, ValueError):
-        cfg = {}
-    return (cfg.get("watch") or WATCH_DEFAULT), cfg.get("telegram")
+        return {}
 
 
 def emoji_low(value, red, orange_factor=2.0):
-    """Mniej = gorzej (saldo/GB/minuty/dni). 🔴<red, 🟠<red*factor, 🟢 wyżej."""
+    """Mniej = gorzej. 🔴<red, 🟠<red*factor, 🟢 wyżej, ⚪ brak danych."""
     if value is None:
         return GRAY
     if red is None:
@@ -52,27 +55,40 @@ def emoji_low(value, red, orange_factor=2.0):
     return GREEN
 
 
-def notify_telegram(tg, text):
-    if not tg or not tg.get("bot_token") or not tg.get("chat_id"):
+# ── notyfikatory (rozszerzalne wg "type") ──────────────────────────────────
+def _send_telegram(n, text):
+    if not n.get("bot_token") or not n.get("chat_id"):
         return
-    if tg.get("insecure"):
+    if n.get("insecure"):
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     try:
-        r = requests.post(f"https://api.telegram.org/bot{tg['bot_token']}/sendMessage",
-                          data={"chat_id": tg["chat_id"], "text": text},
-                          timeout=20, verify=not tg.get("insecure"))
+        r = requests.post(f"https://api.telegram.org/bot{n['bot_token']}/sendMessage",
+                          data={"chat_id": n["chat_id"], "text": text},
+                          timeout=20, verify=not n.get("insecure"))
         if not r.ok:
-            print(f"(telegram HTTP {r.status_code})", file=sys.stderr)
+            print(f"(telegram '{n.get('_name')}' HTTP {r.status_code})", file=sys.stderr)
     except requests.RequestException as e:
-        print(f"(telegram błąd: {e})", file=sys.stderr)
+        print(f"(telegram '{n.get('_name')}' błąd: {e})", file=sys.stderr)
 
 
+SENDERS = {"telegram": _send_telegram}
+
+
+def dispatch(notifier, text):
+    typ = (notifier or {}).get("type", "telegram")
+    sender = SENDERS.get(typ)
+    if sender:
+        sender(notifier, text)
+    else:
+        print(f"(nieznany typ notyfikatora: {typ})", file=sys.stderr)
+
+
+# ── render statusu ─────────────────────────────────────────────────────────
 def render_report(s, t):
-    """Czysty render (bez sieci): (linie[list[str]], any_red[bool]) dla danego zestawu progów."""
+    """Pełny kolorowy status dla zestawu progów t. Zwraca (linie, any_red)."""
     label = t.get("label")
-    head = f"📱 {s['msisdn']} ({s.get('type') or '?'})" + (f" — {label}" if label else "")
-    lines = [head]
+    lines = [f"📱 {s['msisdn']} ({s.get('type') or '?'})" + (f" — {label}" if label else "")]
     flags = []
 
     def add(emoji, text):
@@ -92,7 +108,7 @@ def render_report(s, t):
     paid = []
     for p in s["packages"]:
         if not p.get("paid"):
-            continue   # tylko PŁATNE pakiety (darmowe usługi/limity pomijamy — bez uwag)
+            continue
         st = package_status(p, validity_days=t.get("package_validity_days", 31))
         if not st["event"]:
             continue
@@ -111,41 +127,50 @@ def render_report(s, t):
     return lines, (RED in flags)
 
 
+def oneliner(s, label):
+    return (f"✓ 📱 {s['msisdn']}" + (f" — {label}" if label else "")
+            + f" | {s['balance_pln']} {s['balance_unit']} | {s['data_gb']} GB | "
+              f"{s['minutes']:.0f} min | konto do {str(s['account_expires'])[:10]}")
+
+
 def main():
-    watch, global_tg = load_config()
-    global_blocks, any_red = [], False
-    for msisdn, t in watch.items():
-        # 1) pobierz dane RAZ
+    cfg = load_config()
+    notifiers = cfg.get("notifiers") or {}
+    for name, n in notifiers.items():
+        n.setdefault("_name", name)
+    any_red = False
+
+    for msisdn, t in (cfg.get("watch") or {}).items():
+        label = t.get("label")
         try:
             s = Play24(msisdn).login().summary()
         except Exception as e:
-            err = f"{RED} {msisdn} ({t.get('label', '')}): BŁĄD {e}"
-            print(err + "\n")
+            err = f"{RED} {msisdn} ({label or ''}): BŁĄD {e}"
+            print(err)
             any_red = True
-            if t.get("notify_global", True):
-                global_blocks.append(err)
-            for n in (t.get("notify") or []):     # błąd też do prywatnych odbiorców
-                if n.get("telegram"):
-                    notify_telegram(n["telegram"], "Play24 monitor:\n\n" + err)
+            for name in {n for sec in t.get("alerts", []) for n in sec.get("notify", [])}:
+                dispatch(notifiers.get(name), "Play24 monitor:\n\n" + err)
             continue
 
-        # 2) widok GLOBALNY (progi bazowe numeru) — do stdout/maila i globalnego telegramu
-        base_lines, base_red = render_report(s, t)
-        print("\n".join(base_lines) + "\n")
-        any_red = any_red or base_red
-        if base_red and t.get("notify_global", True):
-            global_blocks.append("\n".join(base_lines))
+        fired = False
+        for sec in (t.get("alerts") or []):
+            lines, red = render_report(s, {**sec, "label": label})
+            if not red:
+                continue
+            fired = True
+            any_red = True
+            block = "\n".join(lines)
+            targets = sec.get("notify", [])
+            print(block + f"\n   → {', '.join(targets) or '(brak notyfikatora)'}\n")
+            for name in targets:
+                nt = notifiers.get(name)
+                if nt:
+                    dispatch(nt, "Play24 monitor:\n\n" + block)
+                else:
+                    print(f"(brak notyfikatora '{name}' w 'notifiers')", file=sys.stderr)
+        if not fired:
+            print(oneliner(s, label))
 
-        # 3) NIEZALEŻNE powiadomienia per numer (własny telegram + własne progi)
-        for n in (t.get("notify") or []):
-            merged = {**t, **n}            # progi z 'n' nadpisują bazowe; label dziedziczony
-            merged.pop("notify", None)
-            n_lines, n_red = render_report(s, merged)
-            if n_red and n.get("telegram"):
-                notify_telegram(n["telegram"], "Play24 monitor:\n\n" + "\n".join(n_lines))
-
-    if global_tg and global_blocks:        # globalny: tylko numery z 🔴 (i notify_global≠false)
-        notify_telegram(global_tg, "Play24 monitor:\n\n" + "\n\n".join(global_blocks))
     sys.exit(1 if any_red else 0)
 
 
