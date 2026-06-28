@@ -27,9 +27,11 @@ fs
 fs*.xz
 *.zip
 
-# Python
+# Python / uv
 __pycache__/
 *.pyc
+.venv/
+.uv/
 
 # Lokalna konfiguracja monitora (sekrety)
 monitor.json

@@ -1,0 +1,33 @@
+[project]
+name = "play24"
+version = "0.1.0"
+description = "Nieoficjalny klient/biblioteka/MCP do self-care API Play24 (com.play.play24m)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.28",
+    "cryptography>=41",
+]
+
+[project.optional-dependencies]
+# Serwer MCP dla agentów AI (instaluj: uv sync --extra mcp)
+mcp = ["mcp>=1.2"]
+
+[project.scripts]
+play24 = "play24:main"
+play24-json = "play24_json:main"
+play24-mcp = "play24_mcp:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Płaskie moduły (nie pakiet) — wskaż je jawnie dla buildera wheela.
+[tool.hatch.build.targets.wheel]
+include = [
+    "play24.py",
+    "play24_json.py",
+    "play24_mcp.py",
+    "play24lib.py",
+]
