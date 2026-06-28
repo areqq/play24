@@ -106,4 +106,5 @@ Konfiguracja w `~/.play24/monitor.json` (poza repo). Patrz nagłówek pliku `exa
 ```
 
 ---
-Pełne API: `API.md`, `ACTIVATION.md`, `endpoints.txt`. Techniki RE: `METHODS.md`. Kontekst: `CLAUDE.md`.
+Pełne API: [`docs/API.md`](docs/API.md), [`docs/ACTIVATION.md`](docs/ACTIVATION.md),
+[`docs/endpoints.txt`](docs/endpoints.txt). Techniki RE: [`docs/METHODS.md`](docs/METHODS.md). Kontekst: `CLAUDE.md`.

@@ -54,7 +54,7 @@ Dla klientów MCP: `uv run play24-mcp` (stdio). Narzędzia: `play24_accounts`, `
 **Wymaga potwierdzenia człowieka** (realny koszt + autoryzacja PIN/SCA). Nie rób autonomicznie:
 ```bash
 uv run play24 packages --all                 # katalog z id i ceną
-uv run play24 activate <id>                   # zapyta o potwierdzenie; szczegóły: ACTIVATION.md
+uv run play24 activate <id>                   # zapyta o potwierdzenie; szczegóły: docs/ACTIVATION.md
 ```
 (W MCP: `play24_activate` — najpierw potwierdź cenę z użytkownikiem; step-up FIDO robi się sam.)
 
@@ -67,4 +67,4 @@ s = Play24("48XXXXXXXXX").login().summary()
 ## Uwagi
 - Konfiguracja/sekrety/passkey: `~/.play24/` (poza repo). Nigdy nie loguj tokenów/cookies.
 - Każde wywołanie = pełne logowanie passkeyem (kilka żądań) — nie odpytuj w pętli zbyt często.
-- Pełna dokumentacja API: `API.md`, `ACTIVATION.md`, `endpoints.txt`.
+- Pełna dokumentacja API: `docs/API.md`, `docs/ACTIVATION.md`, `docs/endpoints.txt`.

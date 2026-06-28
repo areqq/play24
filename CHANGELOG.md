@@ -35,7 +35,7 @@ Pierwsze spójne wydanie: jeden rdzeń (`play24lib.py`) i cztery interfejsy nad 
 - `play24_passkey.py` — scalony do `play24lib.py` (bez zmiany zachowania).
 - Z CLI usunięto eksperymentalne/niszowe drogi logowania (`login-ip`, `login` hasłem,
   `--token`/`--cookie`) — klient standaryzuje na passkey (działa z każdej sieci). Opis tych
-  alternatyw pozostaje w `API.md` dla celów dokumentacyjnych.
+  alternatyw pozostaje w `docs/API.md` dla celów dokumentacyjnych.
 
 ---
 

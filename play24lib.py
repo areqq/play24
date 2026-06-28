@@ -534,7 +534,7 @@ class Play24:
             })
         return out
 
-    # ---- modyfikacja pakietów (write transakcyjny + SCA step-up) — patrz ACTIVATION.md
+    # ---- modyfikacja pakietów (write transakcyjny + SCA step-up) — patrz docs/ACTIVATION.md
     def _find_component(self, component_id):
         """Znajdź pozycję komponentu w katalogu (ms-components/v8 = ODCZYT)."""
         for it in (self._gw("GET", "ms-components", 8, "components/{userId}") or []):
