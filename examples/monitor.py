@@ -19,14 +19,14 @@ import sys
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from play24lib import Play24, days_until  # noqa: E402
+from play24lib import Play24, days_until, package_status  # noqa: E402
 
 CONFIG_PATH = os.path.expanduser("~/.play24/monitor.json")
 
 # Fallback gdy brak ~/.play24/monitor.json (placeholder — realne dane trzymaj w configu):
 WATCH_DEFAULT = {
-    "48500100200": dict(min_pln=5.0, min_gb=0.5, min_minutes=10,
-                        account_days=14, package_age_days=25, package_expire_days=3),
+    "48500100200": dict(min_pln=5.0, min_gb=0.5, min_minutes=10, account_days=14,
+                        package_renew_days=3, package_expire_days=3, package_validity_days=31),
 }
 
 
@@ -70,14 +70,15 @@ def check(msisdn, t):
     if t.get("min_minutes") is not None and s["minutes"] < t["min_minutes"]:
         a.append(f"minuty {s['minutes']:.0f} < {t['min_minutes']}")
     for p in s["packages"]:
-        if t.get("package_age_days") and p["activationDate"]:
-            age = -(days_until(p["activationDate"]) or 0)
-            if age >= t["package_age_days"]:
-                a.append(f"pakiet '{p['title']}' aktywny od {age:.0f} dni (>= {t['package_age_days']})")
-        for key, label in (("expirationDate", "wygasa"), ("nextApplyDate", "odnowi się")):
-            du = days_until(p.get(key))
-            if t.get("package_expire_days") and du is not None and du <= t["package_expire_days"]:
-                a.append(f"pakiet '{p['title']}' {label} za {du:.0f} dni")
+        st = package_status(p, validity_days=t.get("package_validity_days", 31))
+        if st["event"] == "renew":            # pakiet cykliczny → kiedy się odnowi
+            limit = t.get("package_renew_days")
+            if limit and st["days"] is not None and st["days"] <= limit:
+                a.append(f"pakiet '{st['title']}' (cykliczny) odnowi się za {st['days']:.0f} dni ({str(st['date'])[:10]})")
+        elif st["event"] == "expire":         # pakiet jednorazowy → kiedy wygasa
+            limit = t.get("package_expire_days")
+            if limit and st["days"] is not None and st["days"] <= limit:
+                a.append(f"pakiet '{st['title']}' (jednorazowy) wygasa za {st['days']:.0f} dni ({str(st['date'])[:10]})")
     return s, a
 
 
