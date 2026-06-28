@@ -96,6 +96,26 @@ def days_until(s):
     return (d - now).total_seconds() / 86400.0
 
 
+def package_status(p, validity_days=31):
+    """Inteligentna klasyfikacja pakietu:
+    - cykliczny (cyclicType≠NONE lub jest nextApplyDate) → event 'renew', data = nextApplyDate
+    - jednorazowy → event 'expire', data = expirationDate, a gdy brak: activationDate + validity_days
+    - usługa stała (brak dat) → event None
+    Zwraca {cyclic, event, date, days, title}.
+    """
+    cyclic = bool(p.get("cyclicType") and p["cyclicType"] != "NONE") or bool(p.get("nextApplyDate"))
+    if cyclic:
+        d = p.get("nextApplyDate")
+        return {"cyclic": True, "event": "renew", "date": d, "days": days_until(d), "title": p.get("title")}
+    exp = p.get("expirationDate")
+    if not exp and p.get("activationDate"):
+        a = parse_dt(p["activationDate"])
+        if a:
+            exp = (a + _dt.timedelta(days=validity_days)).isoformat()
+    event = "expire" if exp else None
+    return {"cyclic": False, "event": event, "date": exp, "days": days_until(exp), "title": p.get("title")}
+
+
 class Play24Error(Exception):
     pass
 
@@ -185,6 +205,7 @@ class Play24:
             out.append({
                 "id": c.get("id"), "title": c.get("title"), "state": c.get("state"),
                 "cyclicType": c.get("cyclicType"),
+                "cyclic": bool(c.get("cyclicType") and c["cyclicType"] != "NONE") or bool(c.get("nextApplyDate")),
                 "activationDate": c.get("activationDate"),
                 "nextApplyDate": c.get("nextApplyDate"),
                 "expirationDate": c.get("expirationDate"),

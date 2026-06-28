@@ -183,8 +183,8 @@ Konfiguracja w **`~/.play24/monitor.json`** (poza repo â€” sekrety i numery; wzÃ
 ```json
 {
   "telegram": { "bot_token": "123456:ABC-...", "chat_id": "123456789", "insecure": false },
-  "watch": { "48XXXXXXXXX": { "min_pln": 5.0, "min_gb": 0.5, "min_minutes": 10,
-                              "account_days": 14, "package_age_days": 25, "package_expire_days": 3 } }
+  "watch": { "48XXXXXXXXX": { "min_pln": 5.0, "min_gb": 0.5, "min_minutes": 10, "account_days": 14,
+                              "package_renew_days": 3, "package_expire_days": 3, "package_validity_days": 31 } }
 }
 ```
 ```bash
