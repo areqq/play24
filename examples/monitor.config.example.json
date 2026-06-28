@@ -7,6 +7,7 @@
   },
   "watch": {
     "48500100200": {
+      "label": "Mój numer",
       "min_pln": 5.0,
       "min_gb": 0.5,
       "min_minutes": 10,
