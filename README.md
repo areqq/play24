@@ -1,11 +1,22 @@
-# play24-cli — nieoficjalny klient CLI do Play24
+# play24 — nieoficjalny klient API Play24
 
-Prosty klient wiersza poleceń do API aplikacji **Play24** (`com.play.play24m`), powstały z
-**statycznej analizy APK v11.9.0**. Pełna dokumentacja API: [`API.md`](API.md),
-lista endpointów: [`endpoints.txt`](endpoints.txt).
+Rozpracowane API self-care **Play24** (`com.play.play24m`) + narzędzia w Pythonie do zarządzania
+kontem bez oficjalnej apki. Reverse-engineering APK v11.9.0 (statyka + podsłuch).
 
-> ⚠️ Narzędzie nieoficjalne. Używaj wyłącznie do **własnego konta**. To self-care operatora —
-> nie atakuje żadnej infrastruktury, jedynie odtwarza to, co robi oficjalna apka.
+## Co to potrafi (w skrócie)
+- 📱 **Klient CLI** (`play24.py`) — saldo, pakiety, faktury, dane konta, historia, SIM, dowolny endpoint.
+- 🔑 **Logowanie od zera bez apki** — onboarding numeru kodem SMS, własny **passkey FIDO2** (klucz w pliku),
+  logowanie na dowolnej sieci. Obsługa **wielu kont/numerów** i przełączania.
+- 🛒 **Włączanie/wyłączanie pakietów** — z autoryzacją operacji (SCA/PIN) jak w apce.
+- 🧩 **Biblioteka** (`play24lib.py`) — `Play24(numer).login().summary()` zwraca saldo, ważność konta,
+  GB (krajowe/roaming), minuty, pakiety (z datami odnowienia/wygaśnięcia).
+- 🔔 **Monitor do crona** (`examples/monitor.py`) — pilnuje progów (saldo, ważność konta/pakietów,
+  GB, minuty) dla wielu numerów i śle **kolorowe** alerty 🟢🟠🔴 na **nazwane notyfikatory** (Telegram).
+- 📖 **Dokumentacja RE** — [`API.md`](API.md), [`ACTIVATION.md`](ACTIVATION.md),
+  [`endpoints.txt`](endpoints.txt), [`METHODS.md`](METHODS.md).
+
+> ⚠️ Nieoficjalne. Używaj wyłącznie do **własnego konta**. To self-care operatora — nic nie atakuje,
+> jedynie odtwarza to, co robi oficjalna apka.
 
 ## Wymagania
 ```bash
