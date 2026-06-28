@@ -59,8 +59,13 @@ ze swoimi progami.
 ```bash
 cp examples/monitor.config.example.json ~/.play24/monitor.json   # i uzupełnij
 uv run python examples/monitor.py
-# cron (codziennie 9:00):
+# raz na dobę o 9:00:
 # 0 9 * * *  cd /ABS/play24 && uv run python examples/monitor.py >> ~/.play24/monitor.log 2>&1
 ```
 > Token bota Telegram i numery trzymaj **tylko** w `~/.play24/monitor.json` — `.gitignore`
 > blokuje `monitor.json`, ale i tak nigdy nie commituj sekretów.
+
+## Gdzie to uruchomić
+Monitor jest lekki — raz na dobę odpytuje konto (kilka żądań passkeyem). Nie potrzebujesz własnego
+serwera 24/7: wystarczy dowolna maszyna z `cron` i `uv`. Świetnie sprawdza się **darmowy mikro-VPS**,
+np. [frog.mikr.us](https://frog.mikr.us) — postaw repo, `uv sync`, onboarduj numery i dodaj wpis do `cron`.
