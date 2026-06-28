@@ -2,10 +2,11 @@
 """
 Monitor Play24 do crona — status konta z kolorowymi emoji + alerty na Telegram.
 
-Buduje pełny status (saldo, ważność konta, GB, minuty, płatne pakiety) z oznaczeniami:
+Buduje pełny status (saldo, ważność konta, GB, minuty, PŁATNE pakiety) z oznaczeniami:
   🟢 OK   🟠 uwaga (zbliża się próg)   🔴 reaguj (próg przekroczony)   ⚪ brak danych
-Wysyła raport na Telegram gdy jest cokolwiek 🟠/🔴 i kończy kodem ≠0 gdy jest 🔴
-(cron wyśle też maila). Pakiety cykliczne → "odnowi się", jednorazowe → "wygasa".
+Powiadomienie na Telegram leci TYLKO gdy jest 🔴 (i wtedy zawiera cały kolorowy status);
+exit≠0 gdy 🔴 (cron wyśle też maila). Darmowe usługi/limity są pomijane. Pakiety cykliczne
+→ "odnowi się", jednorazowe → "wygasa".
 
 Konfiguracja: ~/.play24/monitor.json (poza repo). Wzór: examples/monitor.config.example.json.
 Cron:  0 9 * * *  cd /sciezka/repo && /usr/bin/python3 examples/monitor.py
@@ -24,7 +25,7 @@ CONFIG_PATH = os.path.expanduser("~/.play24/monitor.json")
 GREEN, ORANGE, RED, GRAY = "🟢", "🟠", "🔴", "⚪"
 
 WATCH_DEFAULT = {
-    "48500100200": dict(min_pln=5.0, min_gb=0.5, min_minutes=10, account_days=14,
+    "48500100200": dict(label="Mój numer", min_pln=5.0, min_gb=0.5, min_minutes=10, account_days=14,
                         package_renew_days=3, package_expire_days=3, package_validity_days=31),
 }
 
@@ -70,7 +71,9 @@ def notify_telegram(tg, text):
 def build_report(msisdn, t):
     """Zwraca (linie_raportu[list[str]], any_red[bool])."""
     s = Play24(msisdn).login().summary()
-    lines = [f"📱 {s['msisdn']} ({s.get('type') or '?'})"]
+    label = t.get("label")
+    head = f"📱 {s['msisdn']} ({s.get('type') or '?'})" + (f" — {label}" if label else "")
+    lines = [head]
     flags = []
 
     def add(emoji, text):
@@ -87,15 +90,18 @@ def build_report(msisdn, t):
 
     paid = []
     for p in s["packages"]:
+        if not p.get("paid"):
+            continue   # tylko PŁATNE pakiety (darmowe usługi/limity pomijamy — bez uwag)
         st = package_status(p, validity_days=t.get("package_validity_days", 31))
         if not st["event"]:
-            continue   # usługa stała bez daty — pomijamy
+            continue
+        cena = f" [{p['price_pln']:.2f} zł]" if p.get("price_pln") else ""
         if st["event"] == "renew":
             e = emoji_low(st["days"], t.get("package_renew_days"))
-            paid.append(f"{e} {st['title']} (cykl.) — odnowi się za {st['days']:.0f} dni ({str(st['date'])[:10]})")
+            paid.append(f"{e} {st['title']}{cena} (cykl.) — odnowi się za {st['days']:.0f} dni ({str(st['date'])[:10]})")
         else:
             e = emoji_low(st["days"], t.get("package_expire_days"))
-            paid.append(f"{e} {st['title']} (jedn.) — wygasa za {st['days']:.0f} dni ({str(st['date'])[:10]})")
+            paid.append(f"{e} {st['title']}{cena} (jedn.) — wygasa za {st['days']:.0f} dni ({str(st['date'])[:10]})")
         flags.append(e)
     if paid:
         lines.append("Pakiety płatne:")
@@ -106,7 +112,7 @@ def build_report(msisdn, t):
 
 def main():
     watch, tg = load_config()
-    all_lines, any_red, any_warn = [], False, False
+    all_lines, any_red = [], False
     for msisdn, t in watch.items():
         try:
             lines, red = build_report(msisdn, t)
@@ -116,9 +122,8 @@ def main():
         print(block + "\n")
         all_lines.append(block)
         any_red = any_red or red
-        any_warn = any_warn or (ORANGE in block) or red
 
-    if tg and any_warn:   # wyślij gdy cokolwiek 🟠/🔴
+    if tg and any_red:    # powiadomienie TYLKO gdy coś na czerwono (🔴)
         notify_telegram(tg, "Play24 monitor:\n\n" + "\n\n".join(all_lines))
     sys.exit(1 if any_red else 0)
 

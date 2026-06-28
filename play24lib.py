@@ -202,10 +202,16 @@ class Play24:
             c = it.get("component", {})
             if active_only and c.get("state") != "ACTIVE":
                 continue
+            price = it.get("price") or {}
+            pv = price.get("value")
             out.append({
                 "id": c.get("id"), "title": c.get("title"), "state": c.get("state"),
                 "cyclicType": c.get("cyclicType"),
                 "cyclic": bool(c.get("cyclicType") and c["cyclicType"] != "NONE") or bool(c.get("nextApplyDate")),
+                "price_value": pv,                                  # grosze (z it.price)
+                "price_pln": (pv / 100.0) if isinstance(pv, (int, float)) else None,
+                "paid": bool(isinstance(pv, (int, float)) and pv > 0),
+                "currency": price.get("currency"),
                 "activationDate": c.get("activationDate"),
                 "nextApplyDate": c.get("nextApplyDate"),
                 "expirationDate": c.get("expirationDate"),
