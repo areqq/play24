@@ -162,8 +162,13 @@ class Play24:
 
     # ---- surowe dane
     def balance(self):
-        """ms-balances/main → {type, main:{...}, balances:[...]} (saldo + liczniki + ważność konta)."""
+        """ms-balances/main → {type, main:{...}, balances:[...]} (saldo „Konto" + ważność konta)."""
         return self._gw("POST", "ms-balances", 3, "balances/{userId}/main",
+                        body={"serviceKind": self.kind, "serviceType": self.service_type})
+
+    def balances_all(self):
+        """ms-balances/all → {balances:[...]} (KOMPLET liczników: dane + minuty + SMS itd.)."""
+        return self._gw("POST", "ms-balances", 3, "balances/{userId}/all",
                         body={"serviceKind": self.kind, "serviceType": self.service_type})
 
     def account(self):
@@ -188,8 +193,8 @@ class Play24:
 
     # ---- wygodne podsumowanie do monitoringu
     def counters(self):
-        """Lista liczników: [{type,name,available,unit,gb,minutes,expiresAt,isLow}]."""
-        b = self.balance()
+        """Lista WSZYSTKICH liczników (z balances/all): [{type,name,available,unit,gb,minutes,expiresAt,isLow}]."""
+        b = self.balances_all()
         res = []
         for x in (b.get("balances") or []):
             val = x.get("value") or {}
