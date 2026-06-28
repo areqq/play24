@@ -12,6 +12,7 @@ kontem bez oficjalnej apki. Reverse-engineering APK v11.9.0 (statyka + podsłuch
   GB (krajowe/roaming), minuty, pakiety (z datami odnowienia/wygaśnięcia).
 - 🔔 **Monitor do crona** (`examples/monitor.py`) — pilnuje progów (saldo, ważność konta/pakietów,
   GB, minuty) dla wielu numerów i śle **kolorowe** alerty 🟢🟠🔴 na **nazwane notyfikatory** (Telegram).
+- 🤖 **Gotowe do agentów AI** — JSON-owe CLI (`play24_json.py`, read-only) + `SKILL.md` (manifest skilla).
 - 📖 **Dokumentacja RE** — [`API.md`](API.md), [`ACTIVATION.md`](ACTIVATION.md),
   [`endpoints.txt`](endpoints.txt), [`METHODS.md`](METHODS.md).
 
@@ -239,9 +240,27 @@ python3 examples/monitor.py
 > Token bota Telegram i numery trzymaj **tylko** w `~/.play24/monitor.json` — `.gitignore`
 > blokuje `monitor.json`, ale i tak nigdy nie commituj sekretów.
 
+## Użycie w agentach AI (skill)
+Trzy warstwy integracji — od najprostszej:
+1. **Biblioteka** — agent w Pythonie: `from play24lib import Play24; Play24(n).login().summary()`.
+2. **JSON-owe CLI** (`play24_json.py`, read-only) — agent „shell-uje" i parsuje JSON ze stdout:
+   ```bash
+   python3 play24_json.py summary --msisdn 48XXXXXXXXX
+   # {"ok": true, "cmd": "summary", "msisdn": "...", "data": { "balance_pln": 6.47, ... }}
+   ```
+   Kontrakt: `{"ok":true,"data":{...}}` / `{"ok":false,"error":"..."}`, kod wyjścia 0/1.
+   Komendy: `accounts`, `summary`, `balance`, `counters`, `packages`, `account`.
+3. **MCP** — najnatywniej dla agentów (typowane narzędzia); do dołożenia w razie potrzeby.
+
+[`SKILL.md`](SKILL.md) to gotowy manifest skilla (`name` + `description` „kiedy użyć” + instrukcje) —
+wystarczy wskazać go agentowi. Operacje płatne (`activate`) celowo **nie** są w JSON-CLI (wymagają
+potwierdzenia człowieka) — patrz `play24.py activate` / `ACTIVATION.md`.
+
 ## Pliki w repo
 - `play24.py` — klient CLI
 - `play24lib.py` — biblioteka (klasa `Play24`) do użycia w skryptach
+- `play24_json.py` — JSON-owe CLI (read-only) dla agentów AI
+- `SKILL.md` — manifest skilla (dla agentów AI)
 - `examples/monitor.py` — przykładowy monitor progów do crona
 - `play24_passkey.py` — software'owy autentykator WebAuthn/FIDO2
 - `API.md` — dokumentacja rozpracowanego API (hosty, mikroserwisy, auth)
