@@ -21,7 +21,7 @@
     },
 
     "48500100201": {
-      "label": "Alicja",
+      "label": "Domownik",
       "min_pln": 5.0, "min_gb": 0.5, "account_days": 14,
       "package_renew_days": 3, "package_expire_days": 3, "package_validity_days": 31,
 
@@ -29,7 +29,7 @@
       "notify": [
         {
           "_comment": "NIEZALEŻNE powiadomienie — inny Telegram + własne progi (dziedziczy nieustawione).",
-          "telegram": { "bot_token": "999:Alicja-bot-token", "chat_id": "987654321", "insecure": false },
+          "telegram": { "bot_token": "999:Domownik-bot-token", "chat_id": "987654321", "insecure": false },
           "min_pln": 20.0,
           "min_gb": 1.0
         }
