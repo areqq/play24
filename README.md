@@ -193,34 +193,34 @@ Pakiety płatne:
 ```
 
 Konfiguracja w **`~/.play24/monitor.json`** (poza repo — sekrety i numery; wzór:
-`examples/monitor.config.example.json`):
+`examples/monitor.config.example.json`). Model: **nazwane notyfikatory** (globalnie, z `type`)
++ per numer **dowolnie wiele sekcji alertów** (własne progi → na wskazane notyfikatory):
 ```json
 {
-  "telegram": { "bot_token": "123456:ABC-...", "chat_id": "123456789", "insecure": false },
+  "notifiers": {
+    "admin":    { "type": "telegram", "bot_token": "111:bot", "chat_id": "111", "insecure": false },
+    "domownik": { "type": "telegram", "bot_token": "222:bot", "chat_id": "222" }
+  },
   "watch": {
-    "48XXXXXXXXX": { "label": "Mój numer", "min_pln": 5.0, "min_gb": 0.5, "min_minutes": 10, "account_days": 14,
-                     "package_renew_days": 3, "package_expire_days": 3, "package_validity_days": 31 }
+    "48XXXXXXXXX": {
+      "label": "Domownik",
+      "alerts": [
+        { "notify": ["admin"], "min_pln": 5.0, "account_days": 7 },
+        { "notify": ["domownik"], "min_pln": 20.0, "min_gb": 1.0, "package_expire_days": 5 }
+      ]
+    }
   }
 }
 ```
-`telegram` (globalny) dostaje raporty **wszystkich** numerów z 🔴. Progi są per numer (pomiń
-klucz, by nie sprawdzać danego progu, np. `min_gb` dla numeru tylko-do-odbioru).
+- **`notifiers`** — kanały zdefiniowane raz, po nazwie; `type` na razie `telegram` (rozszerzalne).
+- Każdy numer ma **`alerts`** — listę sekcji. Sekcja = własne progi + `notify` (lista nazw
+  notyfikatorów). Gdy w sekcji jest 🔴 → raport leci na te notyfikatory. Sekcji może być ile chcesz.
+- Progi (pomiń klucz, by nie sprawdzać): `min_pln`, `min_gb` (krajowe), `min_minutes`,
+  `account_days`, `package_renew_days`, `package_expire_days`, `package_validity_days`.
+- `exit≠0` gdy gdziekolwiek 🔴 (cron wyśle maila); gdy wszystko OK — ciche jednolinijki na stdout.
 
-### Niezależne powiadomienia per numer
-Każdy numer może mieć własną listę `notify` — **osobny Telegram i własne progi** (nieustawione
-dziedziczy z progów numeru). `notify_global: false` wyłącza wysyłkę tego numeru do globalnego odbiorcy.
-```json
-"48XXXXXXXXX": {
-  "label": "Domownik", "min_pln": 5.0, "min_gb": 0.5,
-  "notify_global": true,
-  "notify": [
-    { "telegram": { "bot_token": "999:inny-bot", "chat_id": "987654321" },
-      "min_pln": 20.0, "min_gb": 1.0 }
-  ]
-}
-```
-Wyżej: admin (globalny) dostaje alert właściciela numeru gdy saldo <5 zł, a sama Domownik na swój Telegram
-gdy saldo <20 zł lub dane <1 GB — niezależnie, każdy ze swoimi progami.
+Wyżej: *admin* dostaje tylko poważne (saldo <5 zł / koniec konta <7 dni), a *domownik* — czulsze
+progi (saldo <20 zł, dane <1 GB) na swój własny Telegram. Niezależnie, każdy ze swoimi progami.
 ```bash
 cp examples/monitor.config.example.json ~/.play24/monitor.json   # i uzupełnij
 python3 examples/monitor.py
