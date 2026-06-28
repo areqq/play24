@@ -30,3 +30,7 @@ fs*.xz
 # Python
 __pycache__/
 *.pyc
+
+# Lokalna konfiguracja monitora (sekrety)
+monitor.json
+**/monitor.json

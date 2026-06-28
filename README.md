@@ -175,13 +175,26 @@ p.balance(); p.account(); p.counters(); p.packages()
 
 ### Gotowy monitor do crona — `examples/monitor.py`
 Pilnuje progów (saldo, ważność konta, GB, minuty, wiek pakietu od aktywacji, bliskość
-wygaśnięcia/odnowienia). Wypisuje ostrzeżenia i kończy kodem ≠0 gdy próg przekroczony
-(cron wyśle wtedy maila). Progi konfigurujesz w słowniku `WATCH` na górze pliku.
+wygaśnięcia/odnowienia), wypisuje ostrzeżenia, **wysyła powiadomienie na Telegram** gdy są
+alerty i kończy kodem ≠0 (cron wyśle też maila).
+
+Konfiguracja w **`~/.play24/monitor.json`** (poza repo — sekrety i numery; wzór:
+`examples/monitor.config.example.json`):
+```json
+{
+  "telegram": { "bot_token": "123456:ABC-...", "chat_id": "123456789", "insecure": false },
+  "watch": { "48XXXXXXXXX": { "min_pln": 5.0, "min_gb": 0.5, "min_minutes": 10,
+                              "account_days": 14, "package_age_days": 25, "package_expire_days": 3 } }
+}
+```
 ```bash
+cp examples/monitor.config.example.json ~/.play24/monitor.json   # i uzupełnij
 python3 examples/monitor.py
 # cron (codziennie 9:00):
 # 0 9 * * *  cd /sciezka/do/repo && /usr/bin/python3 examples/monitor.py
 ```
+> Token bota Telegram i numery trzymaj **tylko** w `~/.play24/monitor.json` — `.gitignore`
+> blokuje `monitor.json`, ale i tak nigdy nie commituj sekretów.
 
 ## Pliki w repo
 - `play24.py` — klient CLI
