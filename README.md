@@ -169,9 +169,10 @@ for pkg in s["packages"]:              # aktywne pakiety + daty
 p.balance(); p.account(); p.counters(); p.packages()
 ```
 
-`summary()` zwraca m.in.: `balance_pln`, `account_expires(_days)`, `data_gb`, `minutes`,
-`counters[]`, `packages[]`, `package_expire_days`, `package_renew_days`. Helpery:
-`parse_amount`, `to_gb`, `to_minutes`, `days_until`.
+`summary()` zwraca m.in.: `balance_pln`, `account_expires(_days)`, `data_gb` (**tylko krajowe**),
+`data_gb_roaming`, `minutes`, `counters[]`, `packages[]` (każdy z `paid`/`price_pln`/`cyclic`),
+`package_expire_days`, `package_renew_days`. Helpery: `parse_amount`, `to_gb`, `to_minutes`,
+`days_until`, `package_status`.
 
 ### Gotowy monitor do crona — `examples/monitor.py`
 Buduje **kolorowy status** konta i **wysyła go na Telegram TYLKO gdy jest 🔴** (wtedy raport
