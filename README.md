@@ -174,9 +174,21 @@ p.balance(); p.account(); p.counters(); p.packages()
 `parse_amount`, `to_gb`, `to_minutes`, `days_until`.
 
 ### Gotowy monitor do crona — `examples/monitor.py`
-Pilnuje progów (saldo, ważność konta, GB, minuty, wiek pakietu od aktywacji, bliskość
-wygaśnięcia/odnowienia), wypisuje ostrzeżenia, **wysyła powiadomienie na Telegram** gdy są
-alerty i kończy kodem ≠0 (cron wyśle też maila).
+Buduje **kolorowy status** konta i **wysyła go na Telegram** gdy coś wymaga uwagi:
+🟢 OK · 🟠 uwaga (blisko progu = 2× próg) · 🔴 reaguj (próg przekroczony) · ⚪ brak danych.
+Sprawdza: saldo, ważność konta, GB, minuty oraz **płatne pakiety** — cykliczne pokazują
+*kiedy się odnowią*, jednorazowe *kiedy wygasną* (usługi stałe pomijane). Kończy kodem ≠0
+gdy jest 🔴 (cron wyśle też maila). Przykładowy raport:
+```
+📱 48XXXXXXXXX (PREPAID)
+🔴 saldo: 2.17 PLN  (min 5.0)
+🟢 konto: do 2027-06-24 (za 361 dni)
+🟢 dane: 8.98 GB
+🟢 minuty: 50
+Pakiety płatne:
+  🟢 Pakiet Data 4 GB (cykl.) — odnowi się za 30 dni (2026-07-28)
+  🟠 Usługa 15PLN/m-c (cykl.) — odnowi się za 3 dni (2026-07-01)
+```
 
 Konfiguracja w **`~/.play24/monitor.json`** (poza repo — sekrety i numery; wzór:
 `examples/monitor.config.example.json`):

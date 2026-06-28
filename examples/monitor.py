@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Monitor Play24 do crona — pilnuje progów i wysyła alerty (np. na Telegram).
+Monitor Play24 do crona — status konta z kolorowymi emoji + alerty na Telegram.
 
-Konfiguracja w ~/.play24/monitor.json (POZA repo — trzyma sekrety i numery), wzór:
-examples/monitor.config.example.json. Jeśli brak pliku, używa wbudowanego WATCH (placeholder).
+Buduje pełny status (saldo, ważność konta, GB, minuty, płatne pakiety) z oznaczeniami:
+  🟢 OK   🟠 uwaga (zbliża się próg)   🔴 reaguj (próg przekroczony)   ⚪ brak danych
+Wysyła raport na Telegram gdy jest cokolwiek 🟠/🔴 i kończy kodem ≠0 gdy jest 🔴
+(cron wyśle też maila). Pakiety cykliczne → "odnowi się", jednorazowe → "wygasa".
 
-Sprawdza: saldo (PLN), ważność konta, GB i minuty z pakietu, wiek pakietu od aktywacji
-oraz bliskość wygaśnięcia/odnowienia. Wypisuje ostrzeżenia, wysyła powiadomienie gdy są
-alerty i kończy kodem ≠0 (cron wyśle też maila).
-
-Cron (codziennie 9:00):  0 9 * * *  cd /sciezka/repo && /usr/bin/python3 examples/monitor.py
+Konfiguracja: ~/.play24/monitor.json (poza repo). Wzór: examples/monitor.config.example.json.
+Cron:  0 9 * * *  cd /sciezka/repo && /usr/bin/python3 examples/monitor.py
 Wymaga onboardingu numeru przez CLI (play24.py register-start/otp).
 """
 import json
@@ -19,11 +18,11 @@ import sys
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from play24lib import Play24, days_until, package_status  # noqa: E402
+from play24lib import Play24, package_status  # noqa: E402
 
 CONFIG_PATH = os.path.expanduser("~/.play24/monitor.json")
+GREEN, ORANGE, RED, GRAY = "🟢", "🟠", "🔴", "⚪"
 
-# Fallback gdy brak ~/.play24/monitor.json (placeholder — realne dane trzymaj w configu):
 WATCH_DEFAULT = {
     "48500100200": dict(min_pln=5.0, min_gb=0.5, min_minutes=10, account_days=14,
                         package_renew_days=3, package_expire_days=3, package_validity_days=31),
@@ -36,20 +35,31 @@ def load_config():
             cfg = json.load(f)
     except (OSError, ValueError):
         cfg = {}
-    watch = cfg.get("watch") or WATCH_DEFAULT
-    return watch, cfg.get("telegram")
+    return (cfg.get("watch") or WATCH_DEFAULT), cfg.get("telegram")
+
+
+def emoji_low(value, red, orange_factor=2.0):
+    """Mniej = gorzej (saldo/GB/minuty/dni). 🔴<red, 🟠<red*factor, 🟢 wyżej."""
+    if value is None:
+        return GRAY
+    if red is None:
+        return GREEN
+    if value < red:
+        return RED
+    if value < red * orange_factor:
+        return ORANGE
+    return GREEN
 
 
 def notify_telegram(tg, text):
-    """Wyślij wiadomość na Telegram (config: {bot_token, chat_id, insecure?})."""
     if not tg or not tg.get("bot_token") or not tg.get("chat_id"):
         return
-    url = f"https://api.telegram.org/bot{tg['bot_token']}/sendMessage"
     if tg.get("insecure"):
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     try:
-        r = requests.post(url, data={"chat_id": tg["chat_id"], "text": text},
+        r = requests.post(f"https://api.telegram.org/bot{tg['bot_token']}/sendMessage",
+                          data={"chat_id": tg["chat_id"], "text": text},
                           timeout=20, verify=not tg.get("insecure"))
         if not r.ok:
             print(f"(telegram HTTP {r.status_code})", file=sys.stderr)
@@ -57,56 +67,60 @@ def notify_telegram(tg, text):
         print(f"(telegram błąd: {e})", file=sys.stderr)
 
 
-def check(msisdn, t):
+def build_report(msisdn, t):
+    """Zwraca (linie_raportu[list[str]], any_red[bool])."""
     s = Play24(msisdn).login().summary()
-    a = []
-    if t.get("min_pln") is not None and (s["balance_pln"] or 0) < t["min_pln"]:
-        a.append(f"saldo {s['balance_pln']} {s['balance_unit']} < {t['min_pln']}")
-    if t.get("account_days") is not None and s["account_expires_days"] is not None \
-            and s["account_expires_days"] < t["account_days"]:
-        a.append(f"konto wygasa za {s['account_expires_days']:.0f} dni ({str(s['account_expires'])[:10]})")
-    if t.get("min_gb") is not None and s["data_gb"] < t["min_gb"]:
-        a.append(f"dane {s['data_gb']} GB < {t['min_gb']}")
-    if t.get("min_minutes") is not None and s["minutes"] < t["min_minutes"]:
-        a.append(f"minuty {s['minutes']:.0f} < {t['min_minutes']}")
+    lines = [f"📱 {s['msisdn']} ({s.get('type') or '?'})"]
+    flags = []
+
+    def add(emoji, text):
+        flags.append(emoji)
+        lines.append(f"{emoji} {text}")
+
+    add(emoji_low(s["balance_pln"], t.get("min_pln")),
+        f"saldo: {s['balance_pln']} {s['balance_unit']}" + (f"  (min {t['min_pln']})" if t.get("min_pln") else ""))
+    add(emoji_low(s["account_expires_days"], t.get("account_days")),
+        f"konto: do {str(s['account_expires'])[:10]}"
+        + (f" (za {s['account_expires_days']:.0f} dni)" if s["account_expires_days"] is not None else ""))
+    add(emoji_low(s["data_gb"], t.get("min_gb")), f"dane: {s['data_gb']} GB")
+    add(emoji_low(s["minutes"], t.get("min_minutes")), f"minuty: {s['minutes']:.0f}")
+
+    paid = []
     for p in s["packages"]:
         st = package_status(p, validity_days=t.get("package_validity_days", 31))
-        if st["event"] == "renew":            # pakiet cykliczny → kiedy się odnowi
-            limit = t.get("package_renew_days")
-            if limit and st["days"] is not None and st["days"] <= limit:
-                a.append(f"pakiet '{st['title']}' (cykliczny) odnowi się za {st['days']:.0f} dni ({str(st['date'])[:10]})")
-        elif st["event"] == "expire":         # pakiet jednorazowy → kiedy wygasa
-            limit = t.get("package_expire_days")
-            if limit and st["days"] is not None and st["days"] <= limit:
-                a.append(f"pakiet '{st['title']}' (jednorazowy) wygasa za {st['days']:.0f} dni ({str(st['date'])[:10]})")
-    return s, a
+        if not st["event"]:
+            continue   # usługa stała bez daty — pomijamy
+        if st["event"] == "renew":
+            e = emoji_low(st["days"], t.get("package_renew_days"))
+            paid.append(f"{e} {st['title']} (cykl.) — odnowi się za {st['days']:.0f} dni ({str(st['date'])[:10]})")
+        else:
+            e = emoji_low(st["days"], t.get("package_expire_days"))
+            paid.append(f"{e} {st['title']} (jedn.) — wygasa za {st['days']:.0f} dni ({str(st['date'])[:10]})")
+        flags.append(e)
+    if paid:
+        lines.append("Pakiety płatne:")
+        lines.extend("  " + x for x in paid)
+
+    return lines, (RED in flags)
 
 
 def main():
     watch, tg = load_config()
-    alarm = False
-    tg_lines = []
+    all_lines, any_red, any_warn = [], False, False
     for msisdn, t in watch.items():
         try:
-            s, alerts = check(msisdn, t)
+            lines, red = build_report(msisdn, t)
         except Exception as e:
-            print(f"✗ [{msisdn}] BŁĄD: {e}")
-            tg_lines.append(f"✗ {msisdn}: BŁĄD {e}")
-            alarm = True
-            continue
-        head = (f"[{s['msisdn']}] {s['balance_pln']} {s['balance_unit']} | "
-                f"{s['data_gb']} GB | {s['minutes']:.0f} min | konto do {str(s['account_expires'])[:10]}")
-        if alerts:
-            alarm = True
-            print("⚠ " + head)
-            for x in alerts:
-                print("    - " + x)
-            tg_lines.append("⚠ " + head + "\n" + "\n".join("  - " + x for x in alerts))
-        else:
-            print("✓ " + head)
-    if tg_lines:
-        notify_telegram(tg, "Play24 monitor:\n" + "\n".join(tg_lines))
-    sys.exit(1 if alarm else 0)
+            lines, red = [f"{RED} {msisdn}: BŁĄD {e}"], True
+        block = "\n".join(lines)
+        print(block + "\n")
+        all_lines.append(block)
+        any_red = any_red or red
+        any_warn = any_warn or (ORANGE in block) or red
+
+    if tg and any_warn:   # wyślij gdy cokolwiek 🟠/🔴
+        notify_telegram(tg, "Play24 monitor:\n\n" + "\n\n".join(all_lines))
+    sys.exit(1 if any_red else 0)
 
 
 if __name__ == "__main__":
