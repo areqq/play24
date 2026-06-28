@@ -241,7 +241,12 @@ class Play24:
         main = b.get("main") or {}
         mval = main.get("value") or {}
         cnts = self.counters()
-        data_gb = sum(c["gb"] for c in cnts if c["gb"] is not None)
+
+        def _is_roam(t):
+            t = (t or "").upper()
+            return "EU" in t or "ROAM" in t
+        data_gb = sum(c["gb"] for c in cnts if c["gb"] is not None and not _is_roam(c["type"]))
+        data_gb_roaming = sum(c["gb"] for c in cnts if c["gb"] is not None and _is_roam(c["type"]))
         minutes = sum(c["minutes"] for c in cnts if c["minutes"] is not None)
         pkgs = self.packages()
         # najbliższa data wygaśnięcia/odnowienia aktywnego pakietu
@@ -254,7 +259,8 @@ class Play24:
             "balance_unit": mval.get("unit"),
             "account_expires": main.get("expiresAt"),
             "account_expires_days": days_until(main.get("expiresAt")),
-            "data_gb": round(data_gb, 3),
+            "data_gb": round(data_gb, 3),              # tylko krajowe (bez roamingu)
+            "data_gb_roaming": round(data_gb_roaming, 3),
             "minutes": round(minutes, 2),
             "counters": cnts,
             "packages": pkgs,

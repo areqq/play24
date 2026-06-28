@@ -85,7 +85,9 @@ def build_report(msisdn, t):
     add(emoji_low(s["account_expires_days"], t.get("account_days")),
         f"konto: do {str(s['account_expires'])[:10]}"
         + (f" (za {s['account_expires_days']:.0f} dni)" if s["account_expires_days"] is not None else ""))
-    add(emoji_low(s["data_gb"], t.get("min_gb")), f"dane: {s['data_gb']} GB")
+    add(emoji_low(s["data_gb"], t.get("min_gb")), f"dane (krajowe): {s['data_gb']} GB")
+    if s.get("data_gb_roaming"):
+        lines.append(f"🌍 roaming UE: {s['data_gb_roaming']} GB")
     add(emoji_low(s["minutes"], t.get("min_minutes")), f"minuty: {s['minutes']:.0f}")
 
     paid = []
