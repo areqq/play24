@@ -28,48 +28,46 @@ python3 -m pip install requests
 
 ## Uwierzytelnianie — drogi
 
-### 1. `login-ip` — autoryzacja po IP (najprostsza, ale tylko w sieci Play)
-Bramka Play rozpoznaje Twój numer po adresie IP transmisji danych — bez PIN-u i SMS.
-**Musisz być na aktywnym internecie mobilnym Play** (nie WiFi). Żądanie musi przejść przez
-GGSN operatora; z zewnątrz serwer odpowiada `access_denied ... GGSN server name pattern`
-(to potwierdza, że flow jest poprawny — brakuje tylko sieci Play).
-```bash
-./play24.py login-ip --msisdn 48500100200 --user-id <ID_ABONENTA>
-```
-
-### 2. `login` — hasłem (EKSPERYMENTALNE, SSO)
-Odtwarza kroki SSO `find-handlers → kyc/register → kyc/register/{nonce}` (podanie hasła).
-Zweryfikowane na żywo (serwer poprawnie parsuje żądania). Kroki authorize/direct + OTP wymagają
-pól `hash`/`operationId`, których nie da się ustalić statycznie — komenda wypisuje surowe
-odpowiedzi serwera, byś mógł je dograć. Patrz `API.md §2.1.B`.
-```bash
-./play24.py login --msisdn 48xxxxxxxxx --user-id <ID_ABONENTA>   # zapyta o hasło
-```
-
-### 3. `--cookie` / `--token` — wstrzyknięcie sesji (dowolna sieć)
-Najpewniejsza droga. Przechwyć **cookies** sesji (lub token) z apki (mitmproxy, patrz niżej):
-```bash
-./play24.py --cookie "JSESSIONID=...; SESSION=..." --user-id 12345678 balance
-./play24.py --token "..." --user-id 12345678 balance     # gdyby któryś endpoint używał tokenu
-```
-Sesja zapisuje się w `~/.play24/session.json` (chmod 600) — kolejne komendy już bez flag.
-
-### 4. ⭐ Podpięcie numeru OD ZERA (FIDO2/passkey, dowolna sieć) — ZWERYFIKOWANE NA ŻYWO
-Rejestracja własnego passkey (WebAuthn) przez weryfikację kodem SMS — działa poza siecią Play.
-Klient pełni rolę autentykatora (klucz EC P-256 w `~/.play24/passkey_<msisdn>.json`).
+### 1. ⭐ ZALECANE — podpięcie numeru OD ZERA (FIDO2/passkey, dowolna sieć)
+**Działa na każdej sieci (WiFi też), nie wymaga hasła ani przechwytywania.** Rejestrujesz własny
+passkey (WebAuthn) przez weryfikację kodem SMS; klient jest własnym autentykatorem (klucz EC P-256
+w `~/.play24/passkey_<msisdn>.json`). Zweryfikowane na żywo.
 ```bash
 ./play24.py register-start --msisdn 48xxxxxxxxx   # wyśle SMS (numer 9-cyfrowy też OK)
 # (przychodzi 4-cyfrowy kod SMS)
 ./play24.py register-otp --code 1234              # weryfikuje kod + rejestruje passkey
-# ✅ numer podpięty. Kolejne logowania (dowolna sieć):
+# ✅ numer podpięty. Kolejne logowania (dowolna sieć, bez SMS):
 ./play24.py auth --msisdn 48xxxxxxxxx             # logowanie passkeyem → sesja
 ./play24.py balance                               # i już działają dane konta
 ```
-Szczegóły protokołu i niuanse (patrz `API.md §2`):
+Po onboardingu kolejne uruchomienia (CLI i biblioteka) logują się **samym passkeyem** — bez SMS.
+Szczegóły protokołu (patrz `API.md §2`):
 - `kyc/register?hint=MSISDN_OTP_REQUIRED` `{type:STANDARD,input:msisdn}` → SMS; kod → `PUT kyc/register/{nonce} {password:<kod>}` (kod OTP idzie w polu `password`!).
-- `POST api/fido/register` **wymaga** `authenticatorSelection` w body (bez niego 500), `attestation:"none"`, alg ES256 (-7), `rpId="https://sso.play.pl"` (origin = ten sam string).
+- `POST api/fido/register` **wymaga** `authenticatorSelection` (bez niego 500), `attestation:"none"`, alg ES256 (-7), `rpId="https://sso.play.pl"` (origin = ten sam string).
 - Sesja: cookies domenowe `.play.pl` (`access-token`/`refresh-token` JWE) ustawiane przez `fido/authenticate/finish` — działają też na bramce.
 - Gateway `{userId}` = **msisdn z prefiksem 48** (np. `48500100200`), `accessLevel: MSISDN`.
+
+### 2. `login-ip` — autoryzacja po IP (tylko z sieci mobilnej Play)
+Bramka rozpoznaje numer po IP transmisji danych — bez PIN-u i SMS, ale **musisz być na internecie
+mobilnym Play** (nie WiFi; żądanie przez GGSN operatora). Z zewnątrz serwer zwraca
+`access_denied ... GGSN server name pattern` (potwierdza poprawność flow — brak tylko sieci Play).
+```bash
+./play24.py login-ip --msisdn 48500100200 --user-id <ID_ABONENTA>
+```
+
+### 3. `--cookie` / `--token` — wstrzyknięcie sesji (dowolna sieć)
+Przechwyć **cookies** sesji (lub token) z apki (mitmproxy, patrz niżej) — gdy nie chcesz onboardingu:
+```bash
+./play24.py --cookie "access-token=...; SSOWWW_SESSION_PROD=..." --user-id 48xxxxxxxxx balance
+```
+Sesja zapisuje się w `~/.play24/session.json` (chmod 600) — kolejne komendy już bez flag.
+
+### 4. `login` — hasłem (EKSPERYMENTALNE, SSO)
+Odtwarza kroki SSO `find-handlers → kyc/register` (podanie hasła). Kroki authorize/direct + OTP
+wymagają pól `hash`/`operationId` — komenda wypisuje surowe odpowiedzi serwera. Patrz `API.md §2.1.B`.
+```bash
+./play24.py login --msisdn 48xxxxxxxxx --user-id <ID_ABONENTA>   # zapyta o hasło
+```
 
 ## Wiele numerów — dwa modele
 
