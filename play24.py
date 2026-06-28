@@ -13,7 +13,7 @@ Potem dowolna komenda loguje się passkeyem automatycznie:
   ./play24.py packages --all
   ./play24.py activate <id>
 
-Pełna lista numerów / przełączanie / dane: ./play24.py --help. Szczegóły API: API.md, ACTIVATION.md.
+Pełna lista numerów / przełączanie / dane: ./play24.py --help. Szczegóły API: docs/API.md, docs/ACTIVATION.md.
 """
 import argparse
 import json
