@@ -1,0 +1,18 @@
+{
+  "_comment": "Skopiuj do ~/.play24/monitor.json i uzupełnij. Trzymaj POZA repo (sekrety!).",
+  "telegram": {
+    "bot_token": "123456:ABC-your-bot-token",
+    "chat_id": "123456789",
+    "insecure": false
+  },
+  "watch": {
+    "48500100200": {
+      "min_pln": 5.0,
+      "min_gb": 0.5,
+      "min_minutes": 10,
+      "account_days": 14,
+      "package_age_days": 25,
+      "package_expire_days": 3
+    }
+  }
+}
