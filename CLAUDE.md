@@ -48,16 +48,26 @@ odczyt salda/pakietów/faktur/konta, wiele numerów, oraz włączanie/wyłączan
 - **Jedno konto, wiele numerów:** `GET api/standard/{profileId}/msisdn/list` + `POST api/standard/{profileId}/token/msisdn-switch/{msisdn}`.
 
 ## Mapa plików
-- `play24.py` — klient CLI (komendy: register-start/otp, auth, accounts, numbers, switch, balance,
-  balances-all, offers, finances, invoices, account, components, packages, activate/deactivate, history, sim, raw, whoami).
-- `play24lib.py` — biblioteka: klasa `Play24(msisdn).login()` + `summary()/balance()/counters()/packages()/account()`
-  i helpery (`parse_amount`, `to_gb`, `to_minutes`, `days_until`). Loguje passkeyem z `~/.play24/`.
+- `play24lib.py` — **RDZEŃ** (cały protokół, brak duplikacji): klasa `Play24(msisdn).login()` +
+  `summary()/balance()/balances_all()/counters()/packages()/account()/numbers()/switch()/activate()/deactivate()/raw()`;
+  funkcje modułu `register_start/register_complete/accounts/load_store/save_store/build_headers/webauthn_login`
+  i helpery (`parse_amount`, `to_gb`, `to_minutes`, `days_until`, `package_status`). Loguje passkeyem z `~/.play24/`.
+  **Zawiera też autentykator WebAuthn/FIDO2** (`Passkey`, `make_credential`, `get_assertion`, `cbor`, `b64`) —
+  wcześniej osobny `play24_passkey.py`, teraz wbudowany (EC P-256, mini-CBOR, base64 NO_WRAP).
+- `play24.py` — **cienki** CLI nad `play24lib` (komendy: register-start/otp, accounts, use, numbers, switch,
+  summary, balance, balances-all, counters, offers, finances, invoices, account, components, packages,
+  activate/deactivate, notifications, history, sim, raw, whoami). Logowanie passkeyem przy każdej komendzie (brak `auth`).
 - `play24_json.py` — JSON-owe CLI (read-only) dla agentów AI; `SKILL.md` — manifest skilla.
+- `play24_mcp.py` — serwer MCP (FastMCP, stdio): PEŁNY protokół jako narzędzia `play24_*` (odczyty +
+  onboarding + numbers/switch + activate/deactivate) + zasób `play24://accounts`.
+- `pyproject.toml` — uv: zależności (requests, cryptography; extra `mcp`) + skrypty `play24`/`play24-json`/`play24-mcp`.
+- `QUICKSTART.md` — szybki start (uv, onboarding, CLI/JSON/lib/MCP, cron).
 - `examples/monitor.py` — przykładowy monitor progów do crona (saldo/ważność/GB/minuty/pakiety; exit≠0 przy alarmie).
-- `play24_passkey.py` — autentykator WebAuthn (EC P-256, mini-CBOR, base64 standard NO_WRAP z paddingiem).
 - `API.md` / `ACTIVATION.md` / `endpoints.txt` — dokumentacja.
 - `METHODS.md` — techniki RE. `re/unpin.js` + `re/frida_run.py` — narzędzia dynamiki.
-- Sesja runtime (NIE w repo): `~/.play24/session.json` + `~/.play24/passkey_<48msisdn>.json`.
+- Środowisko: `uv sync` (+`--extra mcp`); komendy przez `uv run …`.
+- Sesja runtime (NIE w repo): `~/.play24/session.json` (profiles + device_id + active; NIE cookies)
+  + `~/.play24/passkey_<48msisdn>.json`.
 
 ## Jak wrócić do głębszej analizy (repo nie zawiera APK)
 1. Pobierz APK Play24 (XAPK z mirrora), rozpakuj splity, `jadx -d out base.apk`.

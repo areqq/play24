@@ -3,96 +3,87 @@
 Rozpracowane API self-care **Play24** (`com.play.play24m`) + narzędzia w Pythonie do zarządzania
 kontem bez oficjalnej apki. Reverse-engineering APK v11.9.0 (statyka + podsłuch).
 
+Jeden rdzeń (`play24lib.py`), cztery interfejsy: **CLI**, **JSON-CLI**, **biblioteka**, **serwer MCP**.
+Najkrótsza ścieżka: **[QUICKSTART.md](QUICKSTART.md)**.
+
 ## Co to potrafi (w skrócie)
 - 📱 **Klient CLI** (`play24.py`) — saldo, pakiety, faktury, dane konta, historia, SIM, dowolny endpoint.
 - 🔑 **Logowanie od zera bez apki** — onboarding numeru kodem SMS, własny **passkey FIDO2** (klucz w pliku),
   logowanie na dowolnej sieci. Obsługa **wielu kont/numerów** i przełączania.
-- 🛒 **Włączanie/wyłączanie pakietów** — z autoryzacją operacji (SCA/PIN) jak w apce.
+- 🛒 **Włączanie/wyłączanie pakietów** — z autoryzacją operacji (SCA/step-up FIDO) jak w apce.
 - 🧩 **Biblioteka** (`play24lib.py`) — `Play24(numer).login().summary()` zwraca saldo, ważność konta,
-  GB (krajowe/roaming), minuty, pakiety (z datami odnowienia/wygaśnięcia).
+  GB (krajowe/roaming), minuty, pakiety (z datami odnowienia/wygaśnięcia). Tu mieszka cały protokół.
+- 🤖 **Serwer MCP** (`play24_mcp.py`) — **pełny** protokół (odczyty + onboarding + wiele numerów +
+  włączanie/wyłączanie pakietów) jako narzędzia dla agentów AI (Claude Desktop/Code, dowolny klient MCP).
 - 🔔 **Monitor do crona** (`examples/monitor.py`) — pilnuje progów (saldo, ważność konta/pakietów,
   GB, minuty) dla wielu numerów i śle **kolorowe** alerty 🟢🟠🔴 na **nazwane notyfikatory** (Telegram).
-- 🤖 **Gotowe do agentów AI** — JSON-owe CLI (`play24_json.py`, read-only) + `SKILL.md` (manifest skilla).
+- 🧠 **Gotowe do agentów AI** — JSON-owe CLI (`play24_json.py`, read-only) + `SKILL.md` (manifest skilla).
 - 📖 **Dokumentacja RE** — [`API.md`](API.md), [`ACTIVATION.md`](ACTIVATION.md),
   [`endpoints.txt`](endpoints.txt), [`METHODS.md`](METHODS.md).
 
 > ⚠️ Nieoficjalne. Używaj wyłącznie do **własnego konta**. To self-care operatora — nic nie atakuje,
 > jedynie odtwarza to, co robi oficjalna apka.
 
-## Wymagania
+## Wymagania / instalacja (uv)
+Środowiskiem zarządza [uv](https://docs.astral.sh/uv/) (`pyproject.toml`):
 ```bash
-python3 -m pip install requests
+uv sync                 # CLI + biblioteka (requests, cryptography)
+uv sync --extra mcp     # dodatkowo serwer MCP
 ```
+Komendy odpalasz przez `uv run …` (np. `uv run play24 summary`). Bez uv: `pip install requests cryptography`
+i `python3 play24.py …`.
 
-> **Sesja jest cookie-based** (jak w apce — globalny CookieManager), nie `Bearer`. Klient trzyma
-> cookie jar w `~/.play24/session.json`. Szczegóły: `API.md §2`.
+> Logowanie to **FIDO2/passkey**. Biblioteka loguje się passkeyem przy każdym wywołaniu i trzyma
+> cookie jar tylko na czas procesu; w `~/.play24/session.json` zapisane są **profile + device_id**
+> (nie cookies). Klucz passkey: `~/.play24/passkey_<48msisdn>.json` (chmod 600). Szczegóły: `API.md §2`.
 
-## Uwierzytelnianie — drogi
+## Uwierzytelnianie — passkey FIDO2 (dowolna sieć)
 
-### 1. ⭐ ZALECANE — podpięcie numeru OD ZERA (FIDO2/passkey, dowolna sieć)
 **Działa na każdej sieci (WiFi też), nie wymaga hasła ani przechwytywania.** Rejestrujesz własny
 passkey (WebAuthn) przez weryfikację kodem SMS; klient jest własnym autentykatorem (klucz EC P-256
-w `~/.play24/passkey_<msisdn>.json`). Zweryfikowane na żywo.
+w `~/.play24/passkey_<48msisdn>.json`). Zweryfikowane na żywo.
 ```bash
-./play24.py register-start --msisdn 48xxxxxxxxx   # wyśle SMS (numer 9-cyfrowy też OK)
-# (przychodzi 4-cyfrowy kod SMS)
-./play24.py register-otp --code 1234              # weryfikuje kod + rejestruje passkey
-# ✅ numer podpięty. Kolejne logowania (dowolna sieć, bez SMS):
-./play24.py auth --msisdn 48xxxxxxxxx             # logowanie passkeyem → sesja
-./play24.py balance                               # i już działają dane konta
+uv run play24 register-start --msisdn 48xxxxxxxxx              # wyśle SMS (numer 9-cyfrowy też OK)
+# (przychodzi kod SMS)
+uv run play24 register-otp --msisdn 48xxxxxxxxx --code 1234    # weryfikuje kod + rejestruje passkey
+# ✅ numer podpięty. Od teraz KAŻDA komenda loguje się passkeyem automatycznie (bez SMS):
+uv run play24 summary --msisdn 48xxxxxxxxx
+uv run play24 use 48xxxxxxxxx                                  # ustaw domyślny → --msisdn opcjonalny
+uv run play24 summary
 ```
-Po onboardingu kolejne uruchomienia (CLI i biblioteka) logują się **samym passkeyem** — bez SMS.
-Szczegóły protokołu (patrz `API.md §2`):
+Nie ma osobnej komendy „login” — onboardowany numer jest logowany passkeyem przy każdym wywołaniu
+(CLI, biblioteka, MCP). Szczegóły protokołu (patrz `API.md §2`):
 - `kyc/register?hint=MSISDN_OTP_REQUIRED` `{type:STANDARD,input:msisdn}` → SMS; kod → `PUT kyc/register/{nonce} {password:<kod>}` (kod OTP idzie w polu `password`!).
 - `POST api/fido/register` **wymaga** `authenticatorSelection` (bez niego 500), `attestation:"none"`, alg ES256 (-7), `rpId="https://sso.play.pl"` (origin = ten sam string).
 - Sesja: cookies domenowe `.play.pl` (`access-token`/`refresh-token` JWE) ustawiane przez `fido/authenticate/finish` — działają też na bramce.
 - Gateway `{userId}` = **msisdn z prefiksem 48** (np. `48500100200`), `accessLevel: MSISDN`.
 
-### 2. `login-ip` — autoryzacja po IP (tylko z sieci mobilnej Play)
-Bramka rozpoznaje numer po IP transmisji danych — bez PIN-u i SMS, ale **musisz być na internecie
-mobilnym Play** (nie WiFi; żądanie przez GGSN operatora). Z zewnątrz serwer zwraca
-`access_denied ... GGSN server name pattern` (potwierdza poprawność flow — brak tylko sieci Play).
-```bash
-./play24.py login-ip --msisdn 48500100200 --user-id <ID_ABONENTA>
-```
-
-### 3. `--cookie` / `--token` — wstrzyknięcie sesji (dowolna sieć)
-Przechwyć **cookies** sesji (lub token) z apki (mitmproxy, patrz niżej) — gdy nie chcesz onboardingu:
-```bash
-./play24.py --cookie "access-token=...; SSOWWW_SESSION_PROD=..." --user-id 48xxxxxxxxx balance
-```
-Sesja zapisuje się w `~/.play24/session.json` (chmod 600) — kolejne komendy już bez flag.
-
-### 4. `login` — hasłem (EKSPERYMENTALNE, SSO)
-Odtwarza kroki SSO `find-handlers → kyc/register` (podanie hasła). Kroki authorize/direct + OTP
-wymagają pól `hash`/`operationId` — komenda wypisuje surowe odpowiedzi serwera. Patrz `API.md §2.1.B`.
-```bash
-./play24.py login --msisdn 48xxxxxxxxx --user-id <ID_ABONENTA>   # zapyta o hasło
-```
+> Alternatywne drogi logowania odkryte podczas RE (autoryzacja po IP z sieci Play `oauth/authorize-ip`,
+> wstrzyknięcie cookies/tokenu z podsłuchu, SSO hasłem) są opisane w `API.md §2` — klient CLI celowo
+> standaryzuje na passkey (jedna spójna ścieżka, działa wszędzie).
 
 ## Wiele numerów — dwa modele
 
 Play24 rozróżnia dwa przypadki (klient obsługuje oba):
 
-### A) Osobne konta (różni właściciele) — `accounts` + `auth` ⭐ zweryfikowane
+### A) Osobne konta (różni właściciele) — `accounts` + `--msisdn`/`use` ⭐ zweryfikowane
 Każdy numer to osobne konto/profil z własnym passkey (np. numery różnych osób w rodzinie).
-Onboardujesz każdy numer raz, a potem przełączasz aktywne konto logowaniem:
+Onboardujesz każdy numer raz, a potem wskazujesz, którego dotyczy komenda (`--msisdn` albo `use`):
 ```bash
-./play24.py register-start --msisdn <NUMER>   # + register-otp (raz na numer)
-./play24.py accounts                          # lista lokalnych kont (* = aktywne)
-./play24.py auth --msisdn 500100200           # zaloguj/przełącz na to konto
-./play24.py balance                           # dane tego konta
-./play24.py auth --msisdn 500100201           # przełącz na inne konto
+uv run play24 register-start --msisdn <NUMER>   # + register-otp (raz na numer)
+uv run play24 accounts                          # lista lokalnych kont (* = domyślne)
+uv run play24 summary --msisdn 500100200        # dane tego konta (logowanie passkeyem auto)
+uv run play24 use 500100201                     # ustaw inne konto jako domyślne
+uv run play24 summary                           # dotyczy domyślnego
 ```
-`auth` czyści sesję i loguje passkey'em danego numeru (osobny `profileId`). Tak działa zarządzanie
-numerami należącymi do **różnych** kont.
+Każda komenda loguje passkey'em wskazanego numeru (osobny `profileId`, świeża sesja). Tak działa
+zarządzanie numerami należącymi do **różnych** kont.
 
 ### B) Jedno konto, wiele numerów — `numbers` + `switch`
-Jeśli do JEDNEGO konta podpięto kilka numerów, logujesz się raz i przełączasz numer bez ponownego logowania:
+Jeśli do JEDNEGO konta podpięto kilka numerów, przełączasz numer w obrębie tej samej sesji:
 ```bash
-./play24.py numbers              # lista numerów na aktywnym koncie (* = aktywny)
-./play24.py switch 48xxxxxxxxx   # przełącz aktywny numer (msisdn-switch → nowy token sesji)
-./play24.py balance              # od teraz dotyczy przełączonego numeru
+uv run play24 numbers --msisdn <NUMER_KONTA>   # lista numerów na koncie
+uv run play24 switch 48xxxxxxxxx               # przełącz numer (msisdn-switch → nowy token) + pokaż saldo
 ```
 `switch` przełącza w obrębie jednego konta. `{userId}` bramki = msisdn z prefiksem 48; przełączanie
 re-issuuje token sesji scoped na wybrany numer. (Próba przełączenia na numer spoza konta → `MP0038`.)
@@ -102,8 +93,8 @@ re-issuuje token sesji scoped na wybrany numer. (Próba przełączenia na numer 
 posiadasz** — kodem SMS wysłanym na ten numer (to ta sama bramka KYC co przy onboardingu; nie ma obejścia,
 to zabezpieczenie). Robisz to onboardingiem dla nowego numeru:
 ```bash
-./play24.py register-start --msisdn <NOWY_NUMER>   # SMS na nowy numer
-./play24.py register-otp --code XXXX               # dowód posiadania
+uv run play24 register-start --msisdn <NOWY_NUMER>              # SMS na nowy numer
+uv run play24 register-otp --msisdn <NOWY_NUMER> --code XXXX    # dowód posiadania
 ```
 Ponieważ jesteś już zalogowany, `register-start` dołącza Twój istniejący profil do `find-handlers`
 (`userHandles=[profileId]`) — zgodnie z flow „Dodaj numer" (`UpgradeOnboarding.ADD`) w apce — więc nowy
@@ -113,32 +104,35 @@ numer **przypina się do tego samego konta**. Potem `numbers` go pokaże, a `swi
 
 ## Komendy
 ```
-./play24.py accounts           # lokalne konta (osobne profile) — przełączasz przez auth --msisdn
-./play24.py numbers            # numery na aktywnym koncie (jedno konto, wiele numerów)
-./play24.py switch <msisdn>    # przełącz numer w obrębie jednego konta
-./play24.py packages           # aktywne pakiety/usługi + daty aktywacji/odnowienia (--all = cały katalog + id)
-./play24.py activate <id>      # WŁĄCZ pakiet (POST ms-services/v1/components → 409 SCA → step-up passkey → retry); szczegóły: ACTIVATION.md
-./play24.py deactivate <id>    # WYŁĄCZ pakiet
-./play24.py balance            # saldo główne (POST ms-balances/v3/balances/{userId}/main)
-./play24.py balances-all       # wszystkie liczniki/pakiety
-./play24.py offers             # oferty
-./play24.py finances           # podsumowanie finansów
-./play24.py invoices           # faktury / dokumenty
-./play24.py account            # dane konta/klienta
-./play24.py components         # usługi / komponenty taryfy
-./play24.py notifications      # powiadomienia
-./play24.py history            # historia aktywności
-./play24.py sim                # informacje o SIM
-./play24.py whoami             # pokaż zapisaną sesję
+uv run play24 summary            # skrót: saldo, ważność konta, GB (krajowe/roaming), minuty, pakiety
+uv run play24 accounts           # lokalne konta (osobne profile); ustaw domyślny: use <msisdn>
+uv run play24 use <msisdn>       # ustaw domyślny numer (potem --msisdn opcjonalny)
+uv run play24 numbers            # numery na koncie (jedno konto, wiele numerów)
+uv run play24 switch <msisdn>    # przełącz numer w obrębie jednego konta
+uv run play24 packages           # pakiety/usługi + daty odnowienia/wygaśnięcia (--all = katalog + id + cena, --json)
+uv run play24 activate <id>      # WŁĄCZ pakiet (POST ms-services/v1/components → 409 SCA → step-up passkey → retry); ACTIVATION.md
+uv run play24 deactivate <id>    # WYŁĄCZ pakiet
+uv run play24 balance            # saldo główne (POST ms-balances/v3/balances/{userId}/main)
+uv run play24 balances-all       # wszystkie liczniki/pakiety
+uv run play24 counters           # liczniki (dane/minuty/SMS) z wyliczonymi GB/min
+uv run play24 offers             # oferty
+uv run play24 finances           # podsumowanie finansów
+uv run play24 invoices           # faktury / dokumenty
+uv run play24 account            # dane konta/klienta
+uv run play24 components         # usługi / komponenty taryfy (surowo)
+uv run play24 notifications      # powiadomienia
+uv run play24 history            # historia aktywności
+uv run play24 sim                # informacje o SIM
+uv run play24 whoami             # lokalny stan (profile, domyślny numer)
 ```
-Saldo: domyślnie `--kind VOICE --type POSTPAID`. Dla prepaid: `./play24.py --type PREPAID balance`.
+Każda komenda przyjmuje `--msisdn`, a saldo dodatkowo `--kind`/`--type` (domyślnie `VOICE`/`PREPAID`).
 
 ### Dowolny endpoint
 ```bash
-./play24.py raw GET  ms-finances v4 finances/{userId}/info
-./play24.py raw POST ms-balances v3 balances/{userId}/main --body '{"serviceKind":"VOICE","serviceType":"POSTPAID"}'
+uv run play24 raw GET  ms-finances v4 finances/{userId}/info
+uv run play24 raw POST ms-balances v3 balances/{userId}/main --body '{"serviceKind":"VOICE","serviceType":"PREPAID"}'
 ```
-`{userId}` jest podstawiany automatycznie z sesji.
+`{userId}` jest podstawiany automatycznie (msisdn z prefiksem 48).
 
 ## Jak przechwycić token / dokładny format (mitmproxy)
 
@@ -153,8 +147,8 @@ odpowiedzi) najłatwiej potwierdzić jednym podsłuchem oficjalnej apki:
    Aby podsłuchać apkę, trzeba obejść pinning — najprościej **Frida** + skrypt
    `frida-multiple-unpinning`, albo `objection`. Dla samego *logowania* tokenu czasem wystarczy
    przechwycić ruch zaraz po logowaniu z gotowym tokenem w nagłówku `Authorization`.
-5. W mitmweb filtruj `play24-cloud.play.pl` → skopiuj `Authorization: Bearer ...` i `{userId}`
-   z dowolnego żądania. Podaj je do `play24.py --token ... --user-id ...`.
+5. W mitmweb filtruj `play24-cloud.play.pl` → podejrzyj nagłówki/ciało żądań, by potwierdzić
+   dokładny format. (CLI standaryzuje na passkey; ręczne wstrzyknięcie tokenu/cookies opisuje `API.md §2`.)
 
 Alternatywa bez roota/pinningu: zaloguj się na [24.play.pl](https://24.play.pl) w przeglądarce
 i podejrzyj token w DevTools → Network (web używa zbliżonego backendu OAuth).
@@ -233,36 +227,44 @@ Wyżej: *admin* dostaje tylko poważne (saldo <5 zł / koniec konta <7 dni), a *
 progi (saldo <20 zł, dane <1 GB) na swój własny Telegram. Niezależnie, każdy ze swoimi progami.
 ```bash
 cp examples/monitor.config.example.json ~/.play24/monitor.json   # i uzupełnij
-python3 examples/monitor.py
+uv run python examples/monitor.py
 # cron (codziennie 9:00):
-# 0 9 * * *  cd /sciezka/do/repo && /usr/bin/python3 examples/monitor.py
+# 0 9 * * *  cd /sciezka/do/repo && uv run python examples/monitor.py >> ~/.play24/monitor.log 2>&1
 ```
 > Token bota Telegram i numery trzymaj **tylko** w `~/.play24/monitor.json` — `.gitignore`
 > blokuje `monitor.json`, ale i tak nigdy nie commituj sekretów.
 
-## Użycie w agentach AI (skill)
+## Użycie w agentach AI (skill / MCP)
 Trzy warstwy integracji — od najprostszej:
 1. **Biblioteka** — agent w Pythonie: `from play24lib import Play24; Play24(n).login().summary()`.
 2. **JSON-owe CLI** (`play24_json.py`, read-only) — agent „shell-uje" i parsuje JSON ze stdout:
    ```bash
-   python3 play24_json.py summary --msisdn 48XXXXXXXXX
+   uv run play24-json summary --msisdn 48XXXXXXXXX
    # {"ok": true, "cmd": "summary", "msisdn": "...", "data": { "balance_pln": 6.47, ... }}
    ```
    Kontrakt: `{"ok":true,"data":{...}}` / `{"ok":false,"error":"..."}`, kod wyjścia 0/1.
    Komendy: `accounts`, `summary`, `balance`, `counters`, `packages`, `account`.
-3. **MCP** — najnatywniej dla agentów (typowane narzędzia); do dołożenia w razie potrzeby.
+3. **MCP** (`play24_mcp.py`) — najnatywniej dla agentów (typowane narzędzia). Udostępnia **pełny**
+   protokół: odczyty, onboarding (`register_start`/`register_complete`), `numbers`/`switch` oraz
+   `activate`/`deactivate`. Uruchom `uv run play24-mcp` (stdio) i wskaż w kliencie MCP:
+   ```json
+   { "mcpServers": { "play24": { "command": "uv",
+       "args": ["run", "--directory", "/ABS/play24", "play24-mcp"] } } }
+   ```
 
-[`SKILL.md`](SKILL.md) to gotowy manifest skilla (`name` + `description` „kiedy użyć” + instrukcje) —
-wystarczy wskazać go agentowi. Operacje płatne (`activate`) celowo **nie** są w JSON-CLI (wymagają
-potwierdzenia człowieka) — patrz `play24.py activate` / `ACTIVATION.md`.
+[`SKILL.md`](SKILL.md) to gotowy manifest skilla (`name` + `description` „kiedy użyć” + instrukcje).
+Operacje płatne (`activate`) wymagają potwierdzenia ceny z człowiekiem — w JSON-CLI ich **nie ma**;
+w MCP są, ale opisane jako kosztowne. Pełny krok po kroku: [QUICKSTART.md](QUICKSTART.md).
 
 ## Pliki w repo
-- `play24.py` — klient CLI
-- `play24lib.py` — biblioteka (klasa `Play24`) do użycia w skryptach
+- `play24lib.py` — **rdzeń**: cały protokół (klasa `Play24` + onboarding/store/parsery + autentykator WebAuthn/FIDO2)
+- `play24.py` — klient CLI (cienka warstwa nad `play24lib`)
 - `play24_json.py` — JSON-owe CLI (read-only) dla agentów AI
+- `play24_mcp.py` — serwer MCP (pełny protokół jako narzędzia)
+- `pyproject.toml` — projekt/zależności/skrypty (`uv`); `QUICKSTART.md` — szybki start
+- `CHANGELOG.md` — historia zmian
 - `SKILL.md` — manifest skilla (dla agentów AI)
 - `examples/monitor.py` — przykładowy monitor progów do crona
-- `play24_passkey.py` — software'owy autentykator WebAuthn/FIDO2
 - `API.md` — dokumentacja rozpracowanego API (hosty, mikroserwisy, auth)
 - `ACTIVATION.md` — recepta na aktywację pakietów (flow SCA/step-up)
 - `endpoints.txt` — pełna lista endpointów (metoda + ścieżka)

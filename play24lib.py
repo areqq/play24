@@ -11,20 +11,227 @@ Przykład:
     s = p.summary()
     print(s["balance_pln"], s["account_expires"], s["data_gb"], s["minutes"])
 """
+import base64
+import datetime as _dt
+import hashlib
 import json
 import os
 import re
-import datetime as _dt
+import struct
 
 import requests
-import play24_passkey as wa
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 GW = "https://play24-cloud.play.pl/cloud/play24/gateway"
 SSO = "https://login-cloud.play.pl/cloud/sso-customers/gateway/sso-mobile"
+OAUTH = "https://oauth.play.pl/oauth"
+REDIRECT = "https://firebase.play.pl/oauth-callback/"
+CLIENT_ID = "play24_app"
 APP_VERSION = "11.9.0"
 STORE = os.path.expanduser("~/.play24/session.json")
 _AUTH_SEL = {"authenticatorAttachment": "platform", "requireResidentKey": True,
              "userVerification": "required"}
+
+# mikroserwis + wersja dla typowych obszarów (rejestr ms-* z APK)
+SERVICES = {
+    "balances": ("ms-balances", 3), "offers": ("ms-offers", 12), "finances": ("ms-finances", 4),
+    "e-invoices": ("ms-finances", 4), "clients": ("ms-clients", 3), "customers": ("ms-clients", 3),
+    "agreements": ("ms-clients", 3), "components": ("ms-components", 8), "payments": ("ms-payments", 6),
+    "recharges": ("ms-payments", 6), "transactions": ("ms-payments", 6), "activities": ("ms-activities", 2),
+    "sim": ("ms-sim", 2), "esim": ("ms-sim", 2), "verify": ("ms-sim", 2),
+    "notifications": ("ms-notifications", 4), "complaints": ("ms-complaints", 2), "limits": ("ms-balances", 3),
+    "groups": ("ms-groups", 3), "order": ("ms-order", 1), "sales": ("ms-salesmanager", 4),
+    "version": ("ms-appinfo", 1), "services": ("ms-services", 1),
+}
+
+_WEBVIEW_UA = ("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) "
+               "Chrome/131.0.0.0 Mobile Safari/537.36")
+
+
+# ============================================================================= autentykator WebAuthn/FIDO2
+# Software'owy autentykator: odtwarza dokładnie to, co robi apka Play24 (play.fido2.*), ale klucz
+# prywatny trzymamy w pliku zamiast w Android Keystore. Format zweryfikowany z dekompilatu:
+#   - attestation = "none";  attestationObject = CBOR {authData, fmt:"none", attStmt:{}}
+#   - authData = rpIdHash(32) || flags(1) || signCount(4 BE) || attestedCredentialData
+#   - attestedCredentialData = AAGUID(16×0) || credIdLen(2 BE) || credId || COSE_pubkey
+#   - COSE_pubkey (ES256/EC2/P-256) = {1:2, 3:-7, -1:1, -2:x(32), -3:y(32)}
+#   - clientDataJSON = {type, challenge:<echo>, origin:<rpId>};  klucz secp256r1, podpis ES256(-7)
+#   - base64 pól = STANDARD (Android Base64.NO_WRAP, z paddingiem, bez url-safe)
+
+def _cbor_head(major, n):
+    if n < 24:
+        return bytes([(major << 5) | n])
+    if n < 256:
+        return bytes([(major << 5) | 24, n])
+    if n < 65536:
+        return bytes([(major << 5) | 25]) + struct.pack(">H", n)
+    if n < 2 ** 32:
+        return bytes([(major << 5) | 26]) + struct.pack(">I", n)
+    return bytes([(major << 5) | 27]) + struct.pack(">Q", n)
+
+
+def cbor(v):
+    """Minimalny enkoder CBOR (z zachowaniem kolejności kluczy, jak LinkedHashMap w apce)."""
+    if isinstance(v, bool):
+        return bytes([0xF5 if v else 0xF4])
+    if isinstance(v, int):
+        return _cbor_head(0, v) if v >= 0 else _cbor_head(1, -1 - v)
+    if isinstance(v, bytes):
+        return _cbor_head(2, len(v)) + v
+    if isinstance(v, str):
+        b = v.encode()
+        return _cbor_head(3, len(b)) + b
+    if isinstance(v, list):
+        return _cbor_head(4, len(v)) + b"".join(cbor(x) for x in v)
+    if isinstance(v, dict):
+        out = _cbor_head(5, len(v))
+        for k, val in v.items():
+            out += cbor(k) + cbor(val)
+        return out
+    raise TypeError(f"CBOR: nieobsługiwany typ {type(v)}")
+
+
+def b64(data: bytes) -> str:
+    """Base64 standard (jak Android NO_WRAP, z paddingiem)."""
+    return base64.b64encode(data).decode()
+
+
+def b64d(s: str) -> bytes:
+    s = s.strip()
+    pad = (-len(s)) % 4
+    s2 = s.replace("-", "+").replace("_", "/") + ("=" * pad)   # toleruj standard i url-safe
+    return base64.b64decode(s2)
+
+
+class Passkey:
+    """Para kluczy EC P-256 + credentialId + licznik podpisów, trzymane w pliku."""
+
+    def __init__(self, private_key, cred_id: bytes, sign_count: int = 0):
+        self.private_key = private_key
+        self.cred_id = cred_id
+        self.sign_count = sign_count
+
+    @classmethod
+    def create(cls):
+        return cls(ec.generate_private_key(ec.SECP256R1()), os.urandom(32), 0)
+
+    def save(self, path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = {
+            "private_key": self.private_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ).decode(),
+            "cred_id": b64(self.cred_id),
+            "sign_count": self.sign_count,
+        }
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+        os.chmod(path, 0o600)
+
+    @classmethod
+    def load(cls, path):
+        with open(path) as f:
+            d = json.load(f)
+        pk = serialization.load_pem_private_key(d["private_key"].encode(), password=None)
+        return cls(pk, b64d(d["cred_id"]), int(d.get("sign_count", 0)))
+
+    def cose_key(self) -> bytes:
+        """COSE public key (ES256 / EC2 / P-256)."""
+        nums = self.private_key.public_key().public_numbers()
+        x = nums.x.to_bytes(32, "big")
+        y = nums.y.to_bytes(32, "big")
+        return cbor({1: 2, 3: -7, -1: 1, -2: x, -3: y})
+
+    def sign(self, data: bytes) -> bytes:
+        return self.private_key.sign(data, ec.ECDSA(hashes.SHA256()))   # ECDSA-SHA256, DER
+
+
+def _client_data(typ: str, challenge: str, origin: str) -> bytes:
+    # kolejność pól jak w play.fido2.client.model.a: type, challenge, origin
+    return json.dumps({"type": typ, "challenge": challenge, "origin": origin},
+                      separators=(",", ":")).encode()
+
+
+def _auth_data(rp_id: str, flags: int, sign_count: int, attested: bytes = b"") -> bytes:
+    rp_id_hash = hashlib.sha256(rp_id.encode()).digest()
+    return rp_id_hash + bytes([flags]) + struct.pack(">I", sign_count) + attested
+
+
+# flagi authenticatorData: UP=0x01, UV=0x04, AT=0x40
+FLAGS_REGISTER = 0x45  # UP | UV | AT
+FLAGS_ASSERT = 0x05    # UP | UV
+
+
+def make_credential(options: dict, rp_id: str, origin: str):
+    """Rejestracja: z RegisterOptions buduje nowy passkey + RegisterServerPublicKeyCredential."""
+    pk = Passkey.create()
+    client_data = _client_data("webauthn.create", options["challenge"], origin)
+    attested = (
+        b"\x00" * 16                              # AAGUID
+        + struct.pack(">H", len(pk.cred_id))      # credIdLen
+        + pk.cred_id                              # credId
+        + pk.cose_key()                           # COSE pubkey
+    )
+    auth_data = _auth_data(rp_id, FLAGS_REGISTER, pk.sign_count, attested)
+    attestation_object = cbor({"authData": auth_data, "fmt": "none", "attStmt": {}})
+    cid_b64 = b64(pk.cred_id)
+    credential = {
+        "nonce": options.get("nonce"), "id": cid_b64, "rawId": cid_b64,
+        "response": {"clientDataJSON": b64(client_data),
+                     "attestationObject": b64(attestation_object)},
+        "type": "public-key",
+    }
+    return pk, credential
+
+
+def get_assertion(options: dict, pk: "Passkey", rp_id: str, origin: str) -> dict:
+    """Logowanie: z AuthenticateOptions buduje podpisaną asercję."""
+    client_data = _client_data("webauthn.get", options["challenge"], origin)
+    pk.sign_count += 1
+    auth_data = _auth_data(rp_id, FLAGS_ASSERT, pk.sign_count)
+    signature = pk.sign(auth_data + hashlib.sha256(client_data).digest())
+    cid_b64 = b64(pk.cred_id)
+    return {
+        "nonce": options.get("nonce"), "id": cid_b64, "rawId": cid_b64,
+        "response": {"clientDataJSON": b64(client_data), "authenticatorData": b64(auth_data),
+                     "signature": b64(signature), "userHandle": None},
+        "type": "public-key",
+    }
+
+
+# ============================================================================= klient / transport
+def build_headers(device_id, oauth=False, token=None):
+    """Jedyny budowniczy nagłówków (współdzielony przez bibliotekę i CLI)."""
+    h = {
+        "App-Version": APP_VERSION, "OS-Type": "android", "OS-Version": "33",
+        "deviceId": device_id, "Device-Id": device_id,
+        "Device-Manufacturer": "cli", "Device-Model": "play24-cli",
+        "Accept-Language": "pl", "Accept": "application/json", "Content-Type": "application/json",
+        "User-Agent": _WEBVIEW_UA if oauth else "play24/android",
+    }
+    if token and not oauth:
+        h["Authorization"] = "Bearer " + token
+    return h
+
+
+def webauthn_login(session, profile_id, pk, rp_id, headers):
+    """Wspólny flow logowania passkeyem (FIDO2): authenticate start→podpis→finish.
+    Ustawia cookies w 'session'. Zwraca ProfileDto (dict). Rzuca Play24Error przy błędzie."""
+    session.cookies.clear()
+    r = session.post(f"{SSO}/api/fido/authenticate", headers=headers,
+                     json={"profileId": profile_id, "authenticatorSelection": _AUTH_SEL}, timeout=30)
+    if not r.ok:
+        raise Play24Error(f"authenticate start: HTTP {r.status_code} {r.text[:200]}")
+    opts = r.json()
+    rpid = opts.get("rpId") or rp_id
+    assertion = get_assertion({"challenge": opts["challenge"], "nonce": opts.get("nonce")}, pk, rpid, rpid)
+    r2 = session.post(f"{SSO}/api/fido/authenticate/finish", headers=headers, json=assertion, timeout=30)
+    if not r2.ok:
+        raise Play24Error(f"authenticate finish: HTTP {r2.status_code} {r2.text[:200]}")
+    return r2.json() if r2.content else {}
 
 
 def norm_msisdn(m):
@@ -34,6 +241,105 @@ def norm_msisdn(m):
 
 def passkey_path(msisdn, store=STORE):
     return os.path.join(os.path.dirname(store), f"passkey_{norm_msisdn(msisdn)}.json")
+
+
+# ----------------------------------------------------------------------------- store (persystencja)
+def load_store(store=STORE):
+    try:
+        with open(store) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_store(data, store=STORE):
+    import uuid as _uuid  # tylko tu
+    data.setdefault("device_id", str(_uuid.uuid4()))
+    os.makedirs(os.path.dirname(store), exist_ok=True)
+    with open(store, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.chmod(store, 0o600)
+
+
+def device_id(data):
+    if not data.get("device_id"):
+        import uuid as _uuid
+        data["device_id"] = str(_uuid.uuid4())
+    return data["device_id"]
+
+
+def accounts(store=STORE):
+    """Lokalnie zarejestrowane numery: [{msisdn, profile_id, registered}]."""
+    profs = (load_store(store).get("profiles") or {})
+    return [{"msisdn": k, "profile_id": v.get("profile_id"),
+             "registered": os.path.exists(passkey_path(k, store))} for k, v in profs.items()]
+
+
+# ----------------------------------------------------------------------------- onboarding (2 kroki — SMS pomiędzy)
+def register_start(msisdn, store=STORE, profile_type="STANDARD"):
+    """Krok 1: find-handlers + kyc/register → wysyła kod SMS. Zwraca {nonce, characteristic}."""
+    data = load_store(store)
+    dev = device_id(data)
+    sess = requests.Session()
+    h = build_headers(dev)
+    handles = [v["profile_id"] for v in (data.get("profiles") or {}).values() if v.get("profile_id")]
+    sess.post(f"{SSO}/api/standard/find-handlers/{msisdn}", headers=h,
+              json={"userHandles": handles}, timeout=30)
+    r = sess.post(f"{SSO}/api/kyc/register", headers=h,
+                  json={"type": profile_type, "input": str(msisdn)},
+                  params={"hint": "MSISDN_OTP_REQUIRED"}, timeout=30)
+    j = r.json() if r.content else {}
+    if not r.ok or not j.get("nonce"):
+        raise Play24Error(f"kyc/register: HTTP {r.status_code} {j or r.text[:200]}")
+    data.setdefault("_pending", {})[norm_msisdn(msisdn)] = {
+        "nonce": j["nonce"], "cookies": sess.cookies.get_dict(), "device_id": dev, "input": str(msisdn)}
+    save_store(data, store)
+    ch = j.get("characteristic") or {}
+    return {"nonce": j["nonce"], "requiredAction": j.get("requiredAction"),
+            "sms_length": ch.get("length"), "characteristic": ch}
+
+
+def register_complete(msisdn, otp, store=STORE):
+    """Krok 2: kyc/register/{nonce} {password:otp} → fido register → zapis profilu+passkey. Zwraca ProfileDto."""
+    data = load_store(store)
+    key = norm_msisdn(msisdn)
+    pend = (data.get("_pending") or {}).get(key)
+    if not pend:
+        raise Play24Error("Brak rozpoczętej rejestracji — najpierw register_start.")
+    sess = requests.Session()
+    for k, v in (pend.get("cookies") or {}).items():
+        sess.cookies.set(k, v)
+    dev = pend.get("device_id") or device_id(data)
+    h = build_headers(dev)
+    # kyc finish — kod OTP w polu 'password'
+    r = sess.put(f"{SSO}/api/kyc/register/{pend['nonce']}", headers=h, json={"password": str(otp)}, timeout=30)
+    j = r.json() if r.content else {}
+    if not r.ok:
+        raise Play24Error(f"OTP odrzucony: HTTP {r.status_code} {j or r.text[:200]}")
+    if j.get("requiredAction") != "FINISH_FIDO":
+        raise Play24Error(f"requiredAction={j.get('requiredAction')} (oczekiwano FINISH_FIDO): {j}")
+    nonce = j.get("nonce") or pend["nonce"]
+    # fido register (authenticatorSelection WYMAGANE)
+    rr = sess.post(f"{SSO}/api/fido/register", headers=h,
+                   json={"nonce": nonce, "identifier": pend["input"],
+                         "attestation": "none", "authenticatorSelection": _AUTH_SEL}, timeout=30)
+    opts = rr.json() if rr.content else {}
+    if not rr.ok or not isinstance(opts, dict) or not opts.get("challenge"):
+        raise Play24Error(f"fido/register: HTTP {rr.status_code} {opts or rr.text[:200]}")
+    rp = opts.get("relayingParty") or opts.get("rp") or {}
+    rp_id = rp.get("id") or opts.get("rpId")
+    pk, credential = make_credential(opts, rp_id, rp_id)
+    rf = sess.post(f"{SSO}/api/fido/register/finish", headers=h, json=credential, timeout=30)
+    profile = rf.json() if rf.content else {}
+    if not rf.ok:
+        raise Play24Error(f"fido/register/finish: HTTP {rf.status_code} {profile or rf.text[:200]}")
+    pk.save(passkey_path(key, store))
+    data.setdefault("profiles", {})[key] = {
+        "profile_id": profile.get("profileId"),
+        "user_id": profile.get("identifier") or key, "rp_id": rp_id}
+    (data.get("_pending") or {}).pop(key, None)
+    save_store(data, store)
+    return profile
 
 
 # ----------------------------------------------------------------------------- parsery
@@ -127,47 +433,27 @@ class Play24:
         self.msisdn = norm_msisdn(msisdn)
         self.kind = kind
         self.service_type = service_type
+        self._store = store
         self.session = requests.Session()
-        with open(store) as f:
-            data = json.load(f)
+        data = load_store(store)
         prof = (data.get("profiles") or {}).get(self.msisdn)
         if not prof:
             raise Play24Error(f"Numer {self.msisdn} nie jest zarejestrowany lokalnie "
-                              f"(uruchom: play24.py register-start --msisdn {msisdn}).")
+                              f"(najpierw: register_start + register_complete).")
         self.profile_id = prof["profile_id"]
         self.user_id = prof.get("user_id") or self.msisdn
         self.rp_id = prof.get("rp_id") or "https://sso.play.pl"
-        self._device_id = data.get("device_id") or "play24lib"
-        self.pk = wa.Passkey.load(passkey_path(self.msisdn, store))
+        self._device_id = device_id(data)
+        self.pk = Passkey.load(passkey_path(self.msisdn, store))
 
     # ---- transport
     def _headers(self):
-        return {
-            "App-Version": APP_VERSION, "OS-Type": "android", "OS-Version": "33",
-            "deviceId": self._device_id, "Accept-Language": "pl",
-            "Accept": "application/json", "Content-Type": "application/json",
-            "User-Agent": "play24/android",
-        }
+        return build_headers(self._device_id)
 
     def login(self):
         """Uwierzytelnienie passkeyem (FIDO2) → cookies sesji."""
-        self.session.cookies.clear()
-        r = self.session.post(f"{SSO}/api/fido/authenticate",
-                              headers=self._headers(),
-                              json={"profileId": self.profile_id, "authenticatorSelection": _AUTH_SEL},
-                              timeout=30)
-        if not r.ok:
-            raise Play24Error(f"authenticate start: HTTP {r.status_code} {r.text[:200]}")
-        opts = r.json()
-        rp_id = opts.get("rpId") or self.rp_id
-        assertion = wa.get_assertion({"challenge": opts["challenge"], "nonce": opts.get("nonce")},
-                                     self.pk, rp_id, rp_id)
-        r2 = self.session.post(f"{SSO}/api/fido/authenticate/finish",
-                               headers=self._headers(), json=assertion, timeout=30)
-        if not r2.ok:
-            raise Play24Error(f"authenticate finish: HTTP {r2.status_code} {r2.text[:200]}")
-        self.pk.save(passkey_path(self.msisdn))   # zapisz zwiększony sign_count
-        prof = r2.json() if r2.content else {}
+        prof = webauthn_login(self.session, self.profile_id, self.pk, self.rp_id, self._headers())
+        self.pk.save(passkey_path(self.msisdn, self._store))   # zapisz zwiększony sign_count
         if isinstance(prof, dict):
             self.user_id = prof.get("identifier") or self.user_id
         return self
@@ -179,6 +465,36 @@ class Play24:
         if not r.ok:
             raise Play24Error(f"{method} {ms}/{path}: HTTP {r.status_code} {r.text[:200]}")
         return r.json() if r.content else None
+
+    def _sso(self, method, path, body=None):
+        r = self.session.request(method, f"{SSO}/{path}", headers=self._headers(), json=body, timeout=30)
+        if not r.ok:
+            raise Play24Error(f"{method} sso/{path}: HTTP {r.status_code} {r.text[:200]}")
+        return r.json() if r.content else None
+
+    def raw(self, method, ms, ver, path, body=None, query=None):
+        """Dowolny endpoint bramki ({userId} podstawiany)."""
+        return self._gw(method.upper(), ms, str(ver).lstrip("vV"), path, body=body, query=query)
+
+    # ---- wiele numerów na jednym koncie (jeden profil)
+    def numbers(self):
+        """Lista numerów na profilu (GET api/standard/{profileId}/msisdn/list)."""
+        return self._sso("GET", f"api/standard/{self.profile_id}/msisdn/list") or []
+
+    def switch(self, msisdn):
+        """Przełącz aktywny numer w obrębie konta (msisdn-switch). Zwraca nowy user_id."""
+        target = norm_msisdn(msisdn)
+        if target == norm_msisdn(self.user_id):
+            return self.user_id
+        r = self.session.post(f"{SSO}/api/standard/{self.profile_id}/token/msisdn-switch/{target}",
+                              headers=self._headers(), timeout=30)
+        if not r.ok:
+            j = r.json() if r.content else {}
+            code = j.get("responseCode") if isinstance(j, dict) else None
+            hint = " (numer nie jest na koncie? sprawdź numbers())" if code == "MP0035" else ""
+            raise Play24Error(f"msisdn-switch {target}: HTTP {r.status_code} {code or ''}{hint}")
+        self.user_id = target
+        return self.user_id
 
     # ---- surowe dane
     def balance(self):
@@ -217,6 +533,92 @@ class Play24:
                 "expirationDate": c.get("expirationDate"),
             })
         return out
+
+    # ---- modyfikacja pakietów (write transakcyjny + SCA step-up) — patrz ACTIVATION.md
+    def _find_component(self, component_id):
+        """Znajdź pozycję komponentu w katalogu (ms-components/v8 = ODCZYT)."""
+        for it in (self._gw("GET", "ms-components", 8, "components/{userId}") or []):
+            c = it.get("component", {})
+            if str(c.get("id")) == str(component_id):
+                return it, c
+        raise Play24Error(f"Nie znaleziono komponentu id={component_id} (lista: packages(active_only=False)).")
+
+    def _components_post(self, body):
+        """POST do ms-services/v1/components/{userId} (ZAPIS). Zwraca (status_code, json)."""
+        r = self.session.post(f"{GW}/ms-services/v1/components/{self.user_id}",
+                              headers=self._headers(), json=body, timeout=30)
+        try:
+            return r.status_code, (r.json() if r.content else None)
+        except ValueError:
+            return r.status_code, None
+
+    def _step_up(self, conflict):
+        """SCA step-up FIDO (z 409 MP0174): authorize/direct start→podpis passkey→finish → action:TOKEN."""
+        op_id = conflict.get("operationId")
+        start = {"acr": "FIDO", "hash": conflict.get("hash"), "operationId": op_id,
+                 "bindingMessage": None, "loginHint": None, "loginHintType": None,
+                 "nonce": None, "payload": None, "redirectUri": None, "state": None}
+        j1 = self._sso("POST", f"api/standard/{self.profile_id}/authorize/direct", body=start)
+        if not isinstance(j1, dict):
+            raise Play24Error("Step-up start (authorize/direct) bez odpowiedzi.")
+        nonce = j1.get("nonce")
+        chars = {c.get("name"): c.get("value") for c in (j1.get("characteristic") or [])}
+        challenge = chars.get("challenge")
+        cred_id = chars.get("public-key")
+        rp_id = chars.get("rpId") or self.rp_id
+        if not challenge or not nonce:
+            raise Play24Error(f"Step-up: brak challenge/nonce ({list(j1)}).")
+        assertion = get_assertion({"challenge": challenge, "nonce": nonce}, self.pk, rp_id, rp_id)
+        self.pk.save(passkey_path(self.msisdn, self._store))
+        resp = assertion["response"]
+        fin = {"action": "FIDO_REQUIRED", "characteristic": [
+            {"name": "id", "value": cred_id or assertion["id"]},
+            {"name": "clientDataJSON", "value": resp["clientDataJSON"]},
+            {"name": "authenticatorData", "value": resp["authenticatorData"]},
+            {"name": "signature", "value": resp["signature"]},
+        ]}
+        j2 = self._sso("PUT", f"api/standard/{self.profile_id}/authorize/direct/{nonce}", body=fin)
+        if not isinstance(j2, dict) or j2.get("action") != "TOKEN":
+            raise Play24Error(f"Step-up finish bez action=TOKEN ({j2}).")
+        return op_id
+
+    def _modify(self, component_id, op_type, email=None, otp=None, auto_stepup=True):
+        """Wspólna logika ACTIVATE/DEACTIVATE. Zwraca {ok, op_type, component_id, title, price, stepup, result}.
+        NIE pyta interaktywnie — to robi warstwa CLI/MCP."""
+        it, c = self._find_component(component_id)
+        body = {
+            "type": op_type, "componentId": str(c.get("id")),
+            "componentType": c.get("componentType") or c.get("type"),
+            "params": [], "email": email, "otp": otp, "operationId": None,
+        }
+        status, j = self._components_post(body)
+        price = (it.get("price") or {})
+        meta = {"op_type": op_type, "component_id": str(c.get("id")), "title": c.get("title"),
+                "price": price.get("formatted") or price.get("amount")}
+        # 409 MP0174 = wyzwanie SCA (step-up)
+        if status == 409 and isinstance(j, dict) and (j.get("operationId") or j.get("hash")):
+            acr = (j.get("acrType") or j.get("acr") or "")
+            if str(acr).upper().startswith("FIDO") and auto_stepup:
+                op_id = self._step_up(j)
+                retry = dict(body); retry["operationId"] = op_id
+                status, j = self._components_post(retry)
+                if status >= 400:
+                    raise Play24Error(f"{op_type} po step-upie: HTTP {status} {j}")
+                return {**meta, "ok": True, "stepup": "fido", "result": j}
+            if j.get("requiresOTP"):
+                raise Play24Error(f"{op_type} wymaga kodu SMS — podaj otp=<KOD> (component_id={c.get('id')}).")
+            raise Play24Error(f"{op_type} wymaga autoryzacji acrType={acr} (auto_stepup wyłączone).")
+        if status >= 400:
+            raise Play24Error(f"{op_type} {component_id}: HTTP {status} {j}")
+        return {**meta, "ok": True, "stepup": None, "result": j}
+
+    def activate(self, component_id, email=None, otp=None, auto_stepup=True):
+        """WŁĄCZ pakiet/usługę (realny zakup). Auto step-up passkeyem przy SCA (409 MP0174)."""
+        return self._modify(component_id, "ACTIVATE", email=email, otp=otp, auto_stepup=auto_stepup)
+
+    def deactivate(self, component_id, email=None, otp=None, auto_stepup=True):
+        """WYŁĄCZ pakiet/usługę. Auto step-up passkeyem przy SCA."""
+        return self._modify(component_id, "DEACTIVATE", email=email, otp=otp, auto_stepup=auto_stepup)
 
     # ---- wygodne podsumowanie do monitoringu
     def counters(self):

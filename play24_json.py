@@ -33,16 +33,7 @@ def _out(obj, code=0):
 
 
 def cmd_accounts(args):
-    store = os.path.expanduser("~/.play24/session.json")
-    try:
-        with open(store) as f:
-            profiles = (json.load(f).get("profiles") or {})
-    except (OSError, ValueError):
-        profiles = {}
-    data = [{"msisdn": k, "profile_id": v.get("profile_id"),
-             "registered": os.path.exists(lib.passkey_path(k))}
-            for k, v in profiles.items()]
-    _out({"ok": True, "cmd": "accounts", "data": data})
+    _out({"ok": True, "cmd": "accounts", "data": lib.accounts()})
 
 
 def _client(args):
