@@ -1,10 +1,13 @@
 {
   "_comment": "Skopiuj do ~/.play24/monitor.json i uzupełnij. Trzymaj POZA repo (sekrety!).",
+
   "telegram": {
-    "bot_token": "123456:ABC-your-bot-token",
+    "_comment": "GLOBALNY odbiorca (admin) — dostaje raporty wszystkich numerów z 🔴.",
+    "bot_token": "123456:ABC-admin-bot-token",
     "chat_id": "123456789",
     "insecure": false
   },
+
   "watch": {
     "48500100200": {
       "label": "Mój numer",
@@ -15,6 +18,22 @@
       "package_renew_days": 3,
       "package_expire_days": 3,
       "package_validity_days": 31
+    },
+
+    "48500100201": {
+      "label": "Alicja",
+      "min_pln": 5.0, "min_gb": 0.5, "account_days": 14,
+      "package_renew_days": 3, "package_expire_days": 3, "package_validity_days": 31,
+
+      "notify_global": true,
+      "notify": [
+        {
+          "_comment": "NIEZALEŻNE powiadomienie — inny Telegram + własne progi (dziedziczy nieustawione).",
+          "telegram": { "bot_token": "999:Alicja-bot-token", "chat_id": "987654321", "insecure": false },
+          "min_pln": 20.0,
+          "min_gb": 1.0
+        }
+      ]
     }
   }
 }

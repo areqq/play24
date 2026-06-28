@@ -68,9 +68,8 @@ def notify_telegram(tg, text):
         print(f"(telegram błąd: {e})", file=sys.stderr)
 
 
-def build_report(msisdn, t):
-    """Zwraca (linie_raportu[list[str]], any_red[bool])."""
-    s = Play24(msisdn).login().summary()
+def render_report(s, t):
+    """Czysty render (bez sieci): (linie[list[str]], any_red[bool]) dla danego zestawu progów."""
     label = t.get("label")
     head = f"📱 {s['msisdn']} ({s.get('type') or '?'})" + (f" — {label}" if label else "")
     lines = [head]
@@ -113,20 +112,40 @@ def build_report(msisdn, t):
 
 
 def main():
-    watch, tg = load_config()
-    all_lines, any_red = [], False
+    watch, global_tg = load_config()
+    global_blocks, any_red = [], False
     for msisdn, t in watch.items():
+        # 1) pobierz dane RAZ
         try:
-            lines, red = build_report(msisdn, t)
+            s = Play24(msisdn).login().summary()
         except Exception as e:
-            lines, red = [f"{RED} {msisdn}: BŁĄD {e}"], True
-        block = "\n".join(lines)
-        print(block + "\n")
-        all_lines.append(block)
-        any_red = any_red or red
+            err = f"{RED} {msisdn} ({t.get('label', '')}): BŁĄD {e}"
+            print(err + "\n")
+            any_red = True
+            if t.get("notify_global", True):
+                global_blocks.append(err)
+            for n in (t.get("notify") or []):     # błąd też do prywatnych odbiorców
+                if n.get("telegram"):
+                    notify_telegram(n["telegram"], "Play24 monitor:\n\n" + err)
+            continue
 
-    if tg and any_red:    # powiadomienie TYLKO gdy coś na czerwono (🔴)
-        notify_telegram(tg, "Play24 monitor:\n\n" + "\n\n".join(all_lines))
+        # 2) widok GLOBALNY (progi bazowe numeru) — do stdout/maila i globalnego telegramu
+        base_lines, base_red = render_report(s, t)
+        print("\n".join(base_lines) + "\n")
+        any_red = any_red or base_red
+        if base_red and t.get("notify_global", True):
+            global_blocks.append("\n".join(base_lines))
+
+        # 3) NIEZALEŻNE powiadomienia per numer (własny telegram + własne progi)
+        for n in (t.get("notify") or []):
+            merged = {**t, **n}            # progi z 'n' nadpisują bazowe; label dziedziczony
+            merged.pop("notify", None)
+            n_lines, n_red = render_report(s, merged)
+            if n_red and n.get("telegram"):
+                notify_telegram(n["telegram"], "Play24 monitor:\n\n" + "\n".join(n_lines))
+
+    if global_tg and global_blocks:        # globalny: tylko numery z 🔴 (i notify_global≠false)
+        notify_telegram(global_tg, "Play24 monitor:\n\n" + "\n\n".join(global_blocks))
     sys.exit(1 if any_red else 0)
 
 

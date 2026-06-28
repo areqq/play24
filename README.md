@@ -197,10 +197,30 @@ Konfiguracja w **`~/.play24/monitor.json`** (poza repo — sekrety i numery; wz�
 ```json
 {
   "telegram": { "bot_token": "123456:ABC-...", "chat_id": "123456789", "insecure": false },
-  "watch": { "48XXXXXXXXX": { "label": "Mój numer", "min_pln": 5.0, "min_gb": 0.5, "min_minutes": 10, "account_days": 14,
-                              "package_renew_days": 3, "package_expire_days": 3, "package_validity_days": 31 } }
+  "watch": {
+    "48XXXXXXXXX": { "label": "Mój numer", "min_pln": 5.0, "min_gb": 0.5, "min_minutes": 10, "account_days": 14,
+                     "package_renew_days": 3, "package_expire_days": 3, "package_validity_days": 31 }
+  }
 }
 ```
+`telegram` (globalny) dostaje raporty **wszystkich** numerów z 🔴. Progi są per numer (pomiń
+klucz, by nie sprawdzać danego progu, np. `min_gb` dla numeru tylko-do-odbioru).
+
+### Niezależne powiadomienia per numer
+Każdy numer może mieć własną listę `notify` — **osobny Telegram i własne progi** (nieustawione
+dziedziczy z progów numeru). `notify_global: false` wyłącza wysyłkę tego numeru do globalnego odbiorcy.
+```json
+"48XXXXXXXXX": {
+  "label": "Alicja", "min_pln": 5.0, "min_gb": 0.5,
+  "notify_global": true,
+  "notify": [
+    { "telegram": { "bot_token": "999:inny-bot", "chat_id": "987654321" },
+      "min_pln": 20.0, "min_gb": 1.0 }
+  ]
+}
+```
+Wyżej: admin (globalny) dostaje alert Alicji gdy saldo <5 zł, a sama Alicja na swój Telegram
+gdy saldo <20 zł lub dane <1 GB — niezależnie, każdy ze swoimi progami.
 ```bash
 cp examples/monitor.config.example.json ~/.play24/monitor.json   # i uzupełnij
 python3 examples/monitor.py
