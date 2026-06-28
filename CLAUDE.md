@@ -50,6 +50,9 @@ odczyt salda/pakietów/faktur/konta, wiele numerów, oraz włączanie/wyłączan
 ## Mapa plików
 - `play24.py` — klient CLI (komendy: register-start/otp, auth, accounts, numbers, switch, balance,
   balances-all, offers, finances, invoices, account, components, packages, activate/deactivate, history, sim, raw, whoami).
+- `play24lib.py` — biblioteka: klasa `Play24(msisdn).login()` + `summary()/balance()/counters()/packages()/account()`
+  i helpery (`parse_amount`, `to_gb`, `to_minutes`, `days_until`). Loguje passkeyem z `~/.play24/`.
+- `examples/monitor.py` — przykładowy monitor progów do crona (saldo/ważność/GB/minuty/pakiety; exit≠0 przy alarmie).
 - `play24_passkey.py` — autentykator WebAuthn (EC P-256, mini-CBOR, base64 standard NO_WRAP z paddingiem).
 - `API.md` / `ACTIVATION.md` / `endpoints.txt` — dokumentacja.
 - `METHODS.md` — techniki RE. `re/unpin.js` + `re/frida_run.py` — narzędzia dynamiki.
