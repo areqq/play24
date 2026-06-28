@@ -211,7 +211,7 @@ Każdy numer może mieć własną listę `notify` — **osobny Telegram i własn
 dziedziczy z progów numeru). `notify_global: false` wyłącza wysyłkę tego numeru do globalnego odbiorcy.
 ```json
 "48XXXXXXXXX": {
-  "label": "Alicja", "min_pln": 5.0, "min_gb": 0.5,
+  "label": "Domownik", "min_pln": 5.0, "min_gb": 0.5,
   "notify_global": true,
   "notify": [
     { "telegram": { "bot_token": "999:inny-bot", "chat_id": "987654321" },
@@ -219,7 +219,7 @@ dziedziczy z progów numeru). `notify_global: false` wyłącza wysyłkę tego nu
   ]
 }
 ```
-Wyżej: admin (globalny) dostaje alert Alicji gdy saldo <5 zł, a sama Alicja na swój Telegram
+Wyżej: admin (globalny) dostaje alert właściciela numeru gdy saldo <5 zł, a sama Domownik na swój Telegram
 gdy saldo <20 zł lub dane <1 GB — niezależnie, każdy ze swoimi progami.
 ```bash
 cp examples/monitor.config.example.json ~/.play24/monitor.json   # i uzupełnij
