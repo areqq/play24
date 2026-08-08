@@ -33,13 +33,13 @@ odczyt salda/pakietów/faktur/konta, wiele numerów, oraz włączanie/wyłączan
 - Refresh tokenu na 401: `DELETE api/fido/token/refresh/{profileId}/{userId}` + retry z `X-Retry-Disallowed: true`.
 
 ## Aktywacja pakietu (write transakcyjny + SCA) — patrz docs/ACTIVATION.md
-- **Endpoint: `POST ms-services/v1/components/{userId}`** (NIE ms-components/v8). Brak nagłówka OperationToken.
+- **Endpoint: `POST ms-services/v1/components/{userId}`** (NIE ms-components/v8). Krok 4 (commit) wymaga nagłówka **`OperationToken`** = pole `token` z odpowiedzi step-upu (`action:TOKEN`); bez niego 500 `MP0063`.
 - Nagłówki wymagane przez bramkę: **`OS-Type: android`, `OS-Version: 33`**, App-Version, cookies.
 - Body: `{type:ACTIVATE|DEACTIVATE, componentId, componentType, params:[], email, otp:null, operationId:null}`.
 - Flow SCA: POST → **409 `MP0174`** `{operationId, hash(sha512), acrType:FIDO}` → step-up
   `POST/PUT api/standard/{profileId}/authorize/direct` (FIDO, nagłówki Device-Id/Manufacturer/Model;
   characteristic start: challenge/public-key=credId/rpId/timeout; finish: id/clientDataJSON/authenticatorData/signature)
-  → `action:TOKEN` → ponów POST components z `operationId` z 409 → sukces.
+  → `{action:TOKEN, token}` → ponów POST components z `operationId` z 409 **w body** i `token` w nagłówku **`OperationToken`** → sukces.
 - Aktywne pakiety mają w `ms-components` pola `activationDate`/`nextApplyDate`/`expirationDate`/`cyclicType`.
 
 ## Wiele numerów

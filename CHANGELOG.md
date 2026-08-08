@@ -3,6 +3,16 @@
 Wszystkie istotne zmiany w projekcie. Format wg [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/),
 wersjonowanie wg [SemVer](https://semver.org/lang/pl/).
 
+## [Unreleased]
+
+### Fixed
+- **Aktywacja/dezaktywacja pakietu kończyła się `HTTP 500 MP0063`** mimo poprawnego step-upu SCA.
+  Krok commit (`POST ms-services/v1/components/{userId}`) nie wysyłał nagłówka **`OperationToken`**.
+  Apka przenosi tam pole `token` z odpowiedzi step-upu (`action:TOKEN`) — `_step_up` zwraca teraz
+  `(operationId, token)`, a `_components_post` ustawia nagłówek `OperationToken` przy ponowieniu.
+  Poprawione w rdzeniu `play24lib.py` (dotyczy CLI, JSON-CLI, biblioteki i MCP). Dokumentacja
+  (`docs/ACTIVATION.md`, `CLAUDE.md`) skorygowana — wcześniej błędnie pisała „brak nagłówka OperationToken".
+
 ## [0.1.0] — 2026-06-28
 
 Pierwsze spójne wydanie: jeden rdzeń (`play24lib.py`) i cztery interfejsy nad nim

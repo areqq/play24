@@ -5,7 +5,7 @@ Przechwycone na żywo z oficjalnej apki (konto testowe, przykładowy pakiet).
 ## Kluczowe ustalenia (dlaczego CLI dostawał 401)
 - Endpoint modyfikacji to **`ms-services/v1/components/{userId}`** — NIE `ms-components/v8` (ten jest tylko do *odczytu* katalogu).
 - Wymagane nagłówki bramki: **`OS-Type: android`**, **`OS-Version: 33`** (+ standardowe App-Version, Accept-Language, cookies). 
-- **Brak nagłówka `OperationToken`** w tym flow. `operationId` idzie w **body** (z odpowiedzi 409), nie w nagłówku.
+- **Krok 4 (commit) wymaga nagłówka `OperationToken`** = pole `token` z odpowiedzi kroku 3 (`action:TOKEN`). Uwaga na rozdział: `operationId` (z 409) → **body**; `token` (z action:TOKEN) → **nagłówek `OperationToken`** (bez prefiksu `X-`). Pominięcie nagłówka = **500 `MP0063`**.
 - Krok SCA (authorize/direct) wymaga nagłówków: **`Device-Id`**, **`Device-Manufacturer`**, **`Device-Model`**.
 
 ## Sekwencja
@@ -13,7 +13,7 @@ Przechwycone na żywo z oficjalnej apki (konto testowe, przykładowy pakiet).
 ```
 POST https://play24-cloud.play.pl/cloud/play24/gateway/ms-services/v1/components/{userId}
 Headers: OS-Type: android | OS-Version: 33 | App-Version: 11.9.0 | Accept-Language: pl | Content-Type: application/json | Cookie: <sesja>
-Body: { "type":"ACTIVATE", "componentId":"86009", "componentType":"BILLING_OTB",
+Body: { "type":"ACTIVATE", "componentId":"<componentId>", "componentType":"BILLING_OTB",
         "params":[], "email":"<email>", "otp":null, "operationId":null }
 → 409 { "operationId":"<uuid>", "acrType":"FIDO", "hash":"<sha512 hex>",
         "responseCode":"MP0174", "responseMessage":"Wymagana autoryzacja operacji." }
@@ -40,12 +40,13 @@ Body: { "action":"FIDO_REQUIRED",
                            {"name":"clientDataJSON","value":"<b64 {type:webauthn.get,challenge,origin:rpId}>"},
                            {"name":"authenticatorData","value":"<b64 rpIdHash|flags|signCount>"},
                            {"name":"signature","value":"<b64 ECDSA-SHA256 DER>"} ] }
-→ 200 { "action":"TOKEN", ... }   (operacja autoryzowana)
+→ 200 { "action":"TOKEN", "token":"<JWE>", ... }   (operacja autoryzowana; `token` → nagłówek kroku 4)
 ```
 
 ### 4. Ponowienie (→ sukces)
 ```
-POST ms-services/v1/components/{userId}  (te same nagłówki)
+POST ms-services/v1/components/{userId}
+Headers: te same co w kroku 1 + OperationToken: <token z kroku 3>
 Body: { ...jak w kroku 1, "operationId":"<z 409>" }
 → 200/204  → pakiet włączony
 ```
