@@ -543,10 +543,13 @@ class Play24:
                 return it, c
         raise Play24Error(f"Nie znaleziono komponentu id={component_id} (lista: packages(active_only=False)).")
 
-    def _components_post(self, body):
+    def _components_post(self, body, op_token=None):
         """POST do ms-services/v1/components/{userId} (ZAPIS). Zwraca (status_code, json)."""
+        h = self._headers()
+        if op_token:
+            h["OperationToken"] = op_token   # token z kroku 3 SCA (action:TOKEN); bez niego 500 MP0063
         r = self.session.post(f"{GW}/ms-services/v1/components/{self.user_id}",
-                              headers=self._headers(), json=body, timeout=30)
+                              headers=h, json=body, timeout=30)
         try:
             return r.status_code, (r.json() if r.content else None)
         except ValueError:
@@ -580,7 +583,7 @@ class Play24:
         j2 = self._sso("PUT", f"api/standard/{self.profile_id}/authorize/direct/{nonce}", body=fin)
         if not isinstance(j2, dict) or j2.get("action") != "TOKEN":
             raise Play24Error(f"Step-up finish bez action=TOKEN ({j2}).")
-        return op_id
+        return op_id, j2.get("token")
 
     def _modify(self, component_id, op_type, email=None, otp=None, auto_stepup=True):
         """Wspólna logika ACTIVATE/DEACTIVATE. Zwraca {ok, op_type, component_id, title, price, stepup, result}.
@@ -599,9 +602,9 @@ class Play24:
         if status == 409 and isinstance(j, dict) and (j.get("operationId") or j.get("hash")):
             acr = (j.get("acrType") or j.get("acr") or "")
             if str(acr).upper().startswith("FIDO") and auto_stepup:
-                op_id = self._step_up(j)
+                op_id, op_token = self._step_up(j)
                 retry = dict(body); retry["operationId"] = op_id
-                status, j = self._components_post(retry)
+                status, j = self._components_post(retry, op_token=op_token)
                 if status >= 400:
                     raise Play24Error(f"{op_type} po step-upie: HTTP {status} {j}")
                 return {**meta, "ok": True, "stepup": "fido", "result": j}
