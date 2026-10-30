@@ -128,7 +128,7 @@ def cmd_account(args):
 
 
 def cmd_offers(args):
-    _p(_client(args).raw("GET", "ms-offers", 12, "offers/{userId}"))
+    _p(_client(args).raw("GET", "ms-offers", 13, "offers/{userId}"))
 
 
 def cmd_finances(args):
@@ -141,7 +141,7 @@ def cmd_invoices(args):
 
 
 def cmd_components(args):
-    _p(_client(args).raw("GET", "ms-components", 8, "components/{userId}"))
+    _p(_client(args).raw("GET", "ms-services", 1, "components/{userId}"))
 
 
 def cmd_notifications(args):

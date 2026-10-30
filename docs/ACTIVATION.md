@@ -3,7 +3,7 @@
 Przechwycone na żywo z oficjalnej apki (konto testowe, przykładowy pakiet).
 
 ## Kluczowe ustalenia (dlaczego CLI dostawał 401)
-- Endpoint modyfikacji to **`ms-services/v1/components/{userId}`** — NIE `ms-components/v8` (ten jest tylko do *odczytu* katalogu).
+- Endpoint modyfikacji to **`ms-services/v1/components/{userId}`**. Katalog (odczyt) to **`GET` na tym samym adresie** (ms-services v1, zagnieżdżony `ComponentsDto`); dawny `ms-components/v8` od 2026-10 zwraca HTTP 500 `MP0063`. `componentType` w body bierz z pola `type` nowego katalogu (np. `BILLING_OTB` dla pakietów jednorazowych).
 - Wymagane nagłówki bramki: **`OS-Type: android`**, **`OS-Version: 33`** (+ standardowe App-Version, Accept-Language, cookies). 
 - **Krok 4 (commit) wymaga nagłówka `OperationToken`** = pole `token` z odpowiedzi kroku 3 (`action:TOKEN`). Uwaga na rozdział: `operationId` (z 409) → **body**; `token` (z action:TOKEN) → **nagłówek `OperationToken`** (bez prefiksu `X-`). Pominięcie nagłówka = **500 `MP0063`**.
 - Krok SCA (authorize/direct) wymaga nagłówków: **`Device-Id`**, **`Device-Manufacturer`**, **`Device-Model`**.

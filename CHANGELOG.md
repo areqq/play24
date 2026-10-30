@@ -6,6 +6,21 @@ wersjonowanie wg [SemVer](https://semver.org/lang/pl/).
 ## [Unreleased]
 
 ### Fixed
+- **Katalog pakietów (`packages`, `components`, `summary`, `activate`/`deactivate`) padał z `HTTP 500 MP0063`** —
+  Play wyłączył `GET ms-components/v8/components/{userId}` (v9–v11 nie istnieją: 404). Apka czyta katalog z
+  **`GET ms-services/v1/components/{userId}`** (ten sam interfejs Retrofit co POST aktywacji). Nowy kontrakt jest
+  zagnieżdżony (`categories→sections→components`), `id` to string, cena to tekst, `state` to obiekt bez dat
+  (tylko `renewalDate`). Dodano `flatten_catalog()`/`parse_pln_grosze()` spłaszczające go do dawnego kształtu v8,
+  więc `packages()`, `_find_component()`, `_modify()` i interfejsy (CLI/JSON/MCP) działają bez zmian API.
+  Kolumny „Aktywacja” i „wygasa” dla pakietów jednorazowych są teraz puste — serwer tych dat już nie zwraca.
+- **`offers` zwracało `HTTP 404`** — Play podbił mikroserwis z `ms-offers v12` na **v13** (v12 → 404).
+
+### Added
+- `tests/test_catalog.py` (stdlib `unittest`, bez nowych zależności): kontrakt adaptera katalogu na próbce 1:1
+  z żywej odpowiedzi i DTO z APK (`ComponentDto`/`StateDto`/`PriceDto`/`OperationDto`). Uruchom:
+  `python3 -m unittest tests/test_catalog.py`.
+
+### Fixed (wcześniej)
 - **Aktywacja/dezaktywacja pakietu kończyła się `HTTP 500 MP0063`** mimo poprawnego step-upu SCA.
   Krok commit (`POST ms-services/v1/components/{userId}`) nie wysyłał nagłówka **`OperationToken`**.
   Apka przenosi tam pole `token` z odpowiedzi step-upu (`action:TOKEN`) — `_step_up` zwraca teraz

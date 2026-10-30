@@ -12,8 +12,8 @@ odczyt salda/pakietów/faktur/konta, wiele numerów, oraz włączanie/wyłączan
 - **API główne (self-care):** `https://play24-cloud.play.pl/cloud/play24/gateway/{ms}/v{N}/{ścieżka}`
 - **SSO/logowanie:** `https://login-cloud.play.pl/cloud/sso-customers/gateway/sso-mobile/`
 - **OAuth:** `https://oauth.play.pl/oauth/` (client_id=`play24_app`, redirect `https://firebase.play.pl/oauth-callback/`)
-- **Mikroserwisy** (nazwa + wersja): ms-balances v3, ms-offers v12, ms-finances v4, ms-clients v3,
-  ms-components v8 (ODCZYT katalogu), **ms-services v1** (ZAPIS/modyfikacja komponentów), ms-payments v6,
+- **Mikroserwisy** (nazwa + wersja): ms-balances v3, ms-offers **v13** (v12 → 404 od 2026-10), ms-finances v4, ms-clients v3,
+  **ms-services v1** (katalog = `GET components/{userId}` ORAZ zapis/modyfikacja = `POST`; dawny ms-components v8 → 500 MP0063 od 2026-10), ms-payments v6,
   ms-activities v2, ms-sim v2, ms-notifications v4, ms-appinfo v1 … (pełny katalog: `docs/endpoints.txt`, `docs/API.md`).
 - **Gateway `{userId}` = msisdn z prefiksem 48** (np. `48XXXXXXXXX`), `accessLevel: MSISDN`.
 
@@ -40,7 +40,9 @@ odczyt salda/pakietów/faktur/konta, wiele numerów, oraz włączanie/wyłączan
   `POST/PUT api/standard/{profileId}/authorize/direct` (FIDO, nagłówki Device-Id/Manufacturer/Model;
   characteristic start: challenge/public-key=credId/rpId/timeout; finish: id/clientDataJSON/authenticatorData/signature)
   → `{action:TOKEN, token}` → ponów POST components z `operationId` z 409 **w body** i `token` w nagłówku **`OperationToken`** → sukces.
-- Aktywne pakiety mają w `ms-components` pola `activationDate`/`nextApplyDate`/`expirationDate`/`cyclicType`.
+- Katalog ms-services/v1 jest zagnieżdżony (`categories→sections→components`), `state.status` ∈ ACTIVE/INACTIVE/ACTION_REQUIRED/DURING_CHANGE/UNKNOWN,
+  cena to TEKST (`"3 zł"`, `"19,95 zł miesięcznie"`). **Jedyna data to `state.renewalDate`** (cykliczne) — brak activationDate/expirationDate.
+  `play24lib.flatten_catalog` spłaszcza to do dawnego kształtu v8 (`component.title/state/cyclicType/nextApplyDate`, `price.value` w groszach).
 
 ## Wiele numerów
 - **Osobne konta** (różni właściciele): każdy numer = własny passkey/profil; wybór numeru = `--msisdn`
@@ -78,7 +80,7 @@ odczyt salda/pakietów/faktur/konta, wiele numerów, oraz włączanie/wyłączan
 
 ## Gotchas
 - OkHttp/Retrofit są zobfuskowane R8 — adnotacje i klasy mają krótkie nazwy (np. CertificatePinner=`okhttp3.b`).
-- ms-components (odczyt) ≠ ms-services (zapis) — pomyłka = 401.
+- Katalog i zapis to dziś JEDEN mikroserwis ms-services v1 (GET/POST `components/{userId}`); ms-components v8 jest martwy (500).
 - Cert pinning (8× SHA256 dla `*.play.pl`) dotyczy tylko apki; własny klient łączy się normalnie.
 - Auth po IP (`oauth/authorize-ip`) działa tylko z sieci mobilnej operatora (GGSN) — nie z WiFi.
 

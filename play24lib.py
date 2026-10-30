@@ -35,9 +35,9 @@ _AUTH_SEL = {"authenticatorAttachment": "platform", "requireResidentKey": True,
 
 # mikroserwis + wersja dla typowych obszarów (rejestr ms-* z APK)
 SERVICES = {
-    "balances": ("ms-balances", 3), "offers": ("ms-offers", 12), "finances": ("ms-finances", 4),
+    "balances": ("ms-balances", 3), "offers": ("ms-offers", 13), "finances": ("ms-finances", 4),
     "e-invoices": ("ms-finances", 4), "clients": ("ms-clients", 3), "customers": ("ms-clients", 3),
-    "agreements": ("ms-clients", 3), "components": ("ms-components", 8), "payments": ("ms-payments", 6),
+    "agreements": ("ms-clients", 3), "components": ("ms-services", 1), "payments": ("ms-payments", 6),
     "recharges": ("ms-payments", 6), "transactions": ("ms-payments", 6), "activities": ("ms-activities", 2),
     "sim": ("ms-sim", 2), "esim": ("ms-sim", 2), "verify": ("ms-sim", 2),
     "notifications": ("ms-notifications", 4), "complaints": ("ms-complaints", 2), "limits": ("ms-balances", 3),
@@ -402,6 +402,62 @@ def days_until(s):
     return (d - now).total_seconds() / 86400.0
 
 
+
+# ---- katalog komponentów (ms-services/v1, to samo źródło co apka) → kształt v8-like
+_PLN_RE = re.compile(r"^\s*(\d+)(?:[.,](\d{1,2}))?")
+
+def parse_pln_grosze(s):
+    """'3 zł' → 300, '19,95 zł' → 1995, '8 zł miesięcznie' → 800; brak/nieparsowalne → None."""
+    if not isinstance(s, str):
+        return None
+    m = _PLN_RE.match(s)
+    if not m:
+        return None
+    zl, gr = m.group(1), (m.group(2) or "0").ljust(2, "0")
+    return int(zl) * 100 + int(gr)
+
+
+def flatten_catalog(data):
+    """ComponentsDto {categories[{sections[{components[...]}]}]} (GET ms-services/v1/components/{userId})
+    → płaska lista pozycji w kształcie dawnego ms-components/v8, którego używa reszta klienta:
+    {category, section, component{id,title,state,type,componentType,cyclicType,description,
+     activationDate,nextApplyDate,expirationDate}, price{value(grosze),currency,formatted,discounts}|None,
+     operations[{...,title,regulation}], numberOfActivationsLeft}.
+    Uwaga: nowy kontrakt (APK StateDto) nie niesie dat aktywacji/wygaśnięcia — tylko renewalDate (→ nextApplyDate).
+    Status ∈ {ACTIVE, INACTIVE, ACTION_REQUIRED, DURING_CHANGE, UNKNOWN} przepuszczany bez zmian."""
+    out = []
+    if not isinstance(data, dict):
+        return out
+    for cat in (data.get("categories") or []):
+        cat_meta = {"title": cat.get("name"), "type": cat.get("type")}
+        for sec in (cat.get("sections") or []):
+            sec_meta = {"title": sec.get("name"), "type": sec.get("type")}
+            for x in (sec.get("components") or []):
+                st = x.get("state") or {}
+                raw_id = x.get("id")
+                cid = int(raw_id) if isinstance(raw_id, str) and raw_id.isdigit() else raw_id
+                price = None
+                if isinstance(x.get("price"), dict):
+                    pv = x["price"].get("value")
+                    price = {"value": parse_pln_grosze(pv), "currency": "PLN", "formatted": pv,
+                             "discounts": x["price"].get("discounts") or []}
+                ops = []
+                for o in (x.get("operations") or []):
+                    ops.append({**o, "title": o.get("name"), "regulation": o.get("legal")})
+                out.append({
+                    "category": cat_meta, "section": sec_meta,
+                    "component": {
+                        "id": cid, "title": x.get("name"), "state": st.get("status"),
+                        "type": x.get("type"), "componentType": x.get("type"),
+                        "cyclicType": "MONTHLY" if st.get("isCyclic") else "NONE",
+                        "description": x.get("description"),
+                        "activationDate": None, "nextApplyDate": st.get("renewalDate"), "expirationDate": None,
+                    },
+                    "price": price, "operations": ops,
+                    "numberOfActivationsLeft": st.get("activationsLimit"),
+                })
+    return out
+
 def package_status(p, validity_days=31):
     """Inteligentna klasyfikacja pakietu:
     - cykliczny (cyclicType≠NONE lub jest nextApplyDate) → event 'renew', data = nextApplyDate
@@ -510,9 +566,15 @@ class Play24:
     def account(self):
         return self._gw("GET", "ms-clients", 3, "clients/{userId}")
 
+    def _catalog(self):
+        """GET ms-services/v1/components/{userId} (jak apka: ten sam interfejs Retrofit co POST aktywacji),
+        spłaszczony do kształtu v8-like (flatten_catalog). Stary ms-components/v8 → HTTP 500 MP0063 od 2026-10."""
+        return flatten_catalog(self._gw("GET", "ms-services", 1, "components/{userId}"))
+
     def packages(self, active_only=True):
-        """ms-components → lista aktywnych pakietów/usług (z activationDate/nextApplyDate/expirationDate)."""
-        items = self._gw("GET", "ms-components", 8, "components/{userId}") or []
+        """Katalog (ms-services/v1) → lista aktywnych pakietów/usług. Daty: tylko nextApplyDate (renewalDate);
+        activationDate/expirationDate nowy kontrakt nie zwraca."""
+        items = self._catalog()
         out = []
         for it in items:
             c = it.get("component", {})
@@ -536,8 +598,8 @@ class Play24:
 
     # ---- modyfikacja pakietów (write transakcyjny + SCA step-up) — patrz docs/ACTIVATION.md
     def _find_component(self, component_id):
-        """Znajdź pozycję komponentu w katalogu (ms-components/v8 = ODCZYT)."""
-        for it in (self._gw("GET", "ms-components", 8, "components/{userId}") or []):
+        """Znajdź pozycję komponentu w katalogu (ms-services/v1 = ODCZYT, ten sam ms co POST)."""
+        for it in self._catalog():
             c = it.get("component", {})
             if str(c.get("id")) == str(component_id):
                 return it, c

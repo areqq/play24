@@ -49,7 +49,7 @@ POST https://play24-cloud.play.pl/cloud/play24/gateway/ms-balances/v3/balances/{
 | ms-chatgpt | 1 | asystent/chat |
 | ms-clients | 3 | **dane klienta / konta** |
 | ms-complaints | 2 | reklamacje |
-| ms-components | 8 | **usługi / komponenty taryfy** |
+| ms-components | 8 | ~~usługi / komponenty taryfy~~ — **od 2026-10 zwraca HTTP 500 `MP0063`**; katalog czytaj z **ms-services v1** (jak apka) |
 | ms-customerservice | 4 | BOK, chat, kontakt |
 | ms-deliverymanager | 1 | dostawy |
 | ms-device | 1 | urządzenia |
@@ -60,7 +60,7 @@ POST https://play24-cloud.play.pl/cloud/play24/gateway/ms-balances/v3/balances/{
 | ms-finances | 4 | **faktury / płatności / finanse** |
 | ms-groups | 3 | grupy (multi-numer) |
 | ms-notifications | 4 | **powiadomienia** |
-| ms-offers | 12 | **oferty / pakiety na sprzedaż / retencja** |
+| ms-offers | **13** | **oferty / pakiety na sprzedaż / retencja** (v12 → 404 od 2026-10) |
 | ms-order | 1 | zamówienia |
 | ms-payments | 6 | **płatności / doładowania / transakcje** |
 | ms-ren | 1 | (renewal/retencja) |
@@ -163,7 +163,7 @@ Kontekst `BalancesRequestDto` body = `{ "serviceKind": VOICE|DATA|FIX|TV, "servi
 | POST | `balances/{userId}/all` | wszystkie liczniki → `{ balances: [BalanceDto] }` |
 | GET | `balances/{userId}/{id}/grants` | szczegóły przydziału → `[ {availableValue, valueUnit, expireDate} ]` |
 
-### Oferty / pakiety (ms-offers v12)
+### Oferty / pakiety (ms-offers v13; v12 → 404 od 2026-10)
 `offers/{userId}` · `offers/{userId}/current-offer` · `offers/{userId}/details` ·
 `offers/{userId}/hub` · `offers/{userId}/regulations` · `offers/{userId}/retention` ·
 `offers/{userId}/retention-recommendation` · POST `offers/{userId}/save-order`
@@ -177,7 +177,14 @@ Kontekst `BalancesRequestDto` body = `{ "serviceKind": VOICE|DATA|FIX|TV, "servi
 GET `customers/{userId}` · GET `clients/{userId}` · PATCH `customers/{userId}` ·
 PATCH `customers/{userId}/bank-account` · GET `agreements/{userId}` · PATCH `agreements/{userId}`
 
-### Usługi / komponenty (ms-components v8)
+### Usługi / komponenty (ms-services v1; dawniej ms-components v8 → od 2026-10 HTTP 500 MP0063)
+
+`GET ms-services/v1/components/{userId}` zwraca `ComponentsDto` **zagnieżdżony**: `categories[] → sections[] → components[]`,
+gdzie komponent = `{id:"86009" (string), name, type (BILLING|BILLING_OTB|VIRTUAL|BANNER), state:{status: ACTIVE|INACTIVE|ACTION_REQUIRED|DURING_CHANGE|UNKNOWN,
+isCyclic, activationsLimit, renewalDate}, price:{value:"3 zł" (tekst!), discounts[]}|null, operations:[{type, name, legal, ...}]}`.
+Ten sam interfejs Retrofit (APK `InterfaceC2078Rs3`) robi też `POST components/{userId}` (aktywacja), więc GET i POST to jeden mikroserwis.
+**Brak dat aktywacji/wygaśnięcia w kontrakcie** — jest tylko `renewalDate` (cykliczne). `status: ACTIVE` = posiadany.
+Klient spłaszcza to do dawnego kształtu v8 (`play24lib.flatten_catalog`, cena → grosze w `price.value`, tekst w `price.formatted`).
 GET `components/{userId}` · POST `components/{userId}` · GET `components/{userId}/multisim` ·
 GET `components/{userId}/{componentId}/promo-conditions`
 
